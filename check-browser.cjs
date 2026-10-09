@@ -1,0 +1,21 @@
+const {spawn}=require('node:child_process'),fs=require('node:fs'),assert=require('node:assert');
+(async()=>{const browser=spawn('C:/Program Files/Google/Chrome/Application/chrome.exe',['--headless=new','--no-first-run','--remote-debugging-port=9225','--user-data-dir='+__dirname+'/browser-check','http://127.0.0.1:4173'],{windowsHide:true,stdio:'ignore'});let socket;
+try{let tabs;for(let i=0;i<30;i++){try{tabs=await(await fetch('http://127.0.0.1:9225/json')).json();if(tabs.some(t=>t.type==='page'))break;}catch{}await new Promise(r=>setTimeout(r,300));}
+const tab=tabs.find(t=>t.type==='page');socket=new WebSocket(tab.webSocketDebuggerUrl);await new Promise(r=>socket.addEventListener('open',r,{once:true}));let next=0;const pending=new Map();socket.addEventListener('message',e=>{const data=JSON.parse(e.data);if(data.id){const p=pending.get(data.id);pending.delete(data.id);data.error?p.reject(data.error):p.resolve(data.result);}});function call(method,params={}){return new Promise((resolve,reject)=>{const id=++next;pending.set(id,{resolve,reject});socket.send(JSON.stringify({id,method,params}));});}async function evaluate(expression){const r=await call('Runtime.evaluate',{expression,returnByValue:true});if(r.exceptionDetails)throw new Error(JSON.stringify(r.exceptionDetails));return r.result.value;}
+await call('Page.navigate',{url:'http://127.0.0.1:4173'});await new Promise(r=>setTimeout(r,1000));
+await call('Emulation.setDeviceMetricsOverride',{width:1440,height:1000,deviceScaleFactor:1,mobile:false});let state;for(let i=0;i<40;i++){state=await evaluate('({ready, status:document.getElementById("map-status").textContent, provinces:window.provinceData?.features?.length})');if(state.ready)break;await new Promise(r=>setTimeout(r,500));}console.log(JSON.stringify(state));assert.equal(state.ready,true,'Map must load');
+assert.equal(await evaluate('map.getLayoutProperty("route-line","visibility")'),'none');
+await evaluate('document.querySelector("#suggestions button").click()');
+assert.match(await evaluate('document.getElementById("conversation").textContent'),/两组不同字辈/);
+await evaluate('document.querySelector("#suggestions button").click()');
+assert.match(await evaluate('document.getElementById("conversation").textContent'),/通山.*候选/);
+await evaluate('document.querySelector("#suggestions button").click()');
+assert.equal(await evaluate('map.getLayoutProperty("route-line","visibility")'),'visible');
+await evaluate('selectStop("leping")');await new Promise(r=>setTimeout(r,2600));assert.equal(await evaluate('document.getElementById("location-title").textContent'),'乐平');
+const shot=await call('Page.captureScreenshot',{format:'png'});fs.writeFileSync(__dirname+'/../prototype-preview.png',Buffer.from(shot.data,'base64'));
+await call('Emulation.setDeviceMetricsOverride',{width:390,height:844,deviceScaleFactor:1,mobile:true});assert.equal(await evaluate('document.documentElement.scrollWidth <= window.innerWidth'),true,'Mobile page must fit');const mobile=await call('Page.captureScreenshot',{format:'png',captureBeyondViewport:true});fs.writeFileSync(__dirname+'/../prototype-mobile.png',Buffer.from(mobile.data,'base64'));await evaluate('resetConversation(); submitQuestion("我是李某，祖籍四川");');assert.match(await evaluate('document.getElementById("conversation").textContent'),/无法为这个问题/);assert.equal(await evaluate('map.getLayoutProperty("route-line","visibility")'),'none');
+await evaluate('resetConversation(); submitQuestion("我们家姓阮，湖北通山"); submitQuestion("不知道");');assert.match(await evaluate('document.getElementById("conversation").textContent'),/保留两种/);
+await evaluate('submitQuestion("英士中州启");');assert.equal(await evaluate('branch'),'yangxin');
+await evaluate('submitQuestion("<img src=x onerror=alert(1)>");');assert.equal(await evaluate('document.querySelectorAll("#conversation img").length'),0);
+console.log('PASS: map, dialogue entry, branch follow-up, route reveal, flight, reset, unsupported input, unknown answer, alternate branch, text escaping, mobile width');
+}finally{socket?.close();browser.kill();}})().catch(e=>{console.error(e);process.exitCode=1});

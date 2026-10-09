@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { createAgentApi, collectResearch, normalizeResult, publicUrl, readConfig, runResearch } from './agent.mjs';
+import { createAgentApi, collectResearch, normalizeResult, publicUrl, readConfig, responsesEndpoint, runResearch } from './agent.mjs';
 import worker from './worker.mjs';
 
 const sourceUrl = 'https://archive.example.org/family/catalog';
@@ -40,6 +40,8 @@ test('two-stage research uses fixed endpoint and provider citations, then extrac
   assert.equal(calls.length, 2);
   assert.equal(calls[0].url, 'https://api.openai.com/v1/responses');
   assert.equal(calls[0].payload.store, false);
+  assert.equal(calls[0].payload.model, 'gpt-5.5');
+  assert.equal(calls[1].payload.model, 'gpt-5.5', 'extraction defaults to the configured research model');
   assert.equal(calls[0].payload.max_tool_calls, 4);
   assert.equal(calls[0].payload.tools[0].type, 'web_search');
   assert.equal(calls[1].payload.text.format.strict, true);
@@ -54,6 +56,104 @@ test('two-stage research uses fixed endpoint and provider citations, then extrac
   assert.equal(result.usage.inputTokens, 230);
   assert.equal(result.usage.outputTokens, 140);
   assert.equal(result.usage.searchCalls, 1);
+});
+
+test('extraction model independently configured and only cited sources passed to it', async () => {
+  const calls = [];
+  const research = researchFixture();
+  research.output[0].action.sources.push({ type: 'url', url: 'https://archive.example.org/uncited-catalog' });
+  const api = createAgentApi({ OPENAI_API_KEY: 'test-key-not-a-real-credential', OPENAI_BASE_URL: 'https://api.shuaiapi.com/v1', OPENAI_MODEL: 'gpt-5.5', OPENAI_EXTRACTION_MODEL: 'gpt-6-luna' }, { fetch: async (url, init) => {
+    calls.push({ url, payload: JSON.parse(init.body) });
+    return responseJson(calls.length === 1 ? research : extractionResponse());
+  } });
+  const response = await api(query());
+  assert.equal(response.status, 200);
+  const result = await response.json();
+  assert.equal(calls[0].payload.model, 'gpt-5.5');
+  assert.equal(calls[1].payload.model, 'gpt-6-luna');
+  assert.equal(calls[1].payload.tools, undefined);
+  assert.equal(calls[1].payload.text.format.strict, true);
+  assert.deepEqual(JSON.parse(calls[1].payload.input).sources.map(source => source.id), ['S1']);
+  assert.ok(JSON.parse(calls[1].payload.input).sources.every(source => source.cited));
+  assert.equal(result.sources.length, 2, 'consulted sources remain available in the research inventory');
+  assert.equal(result.clues.length, 1);
+  assert.equal(result.clues[0].sourceIds[0], 'S1');
+  const status = await (await api(new Request('http://127.0.0.1/api/agent/status'))).json();
+  assert.equal(status.model, 'gpt-5.5');
+  assert.equal(status.extractionModel, 'gpt-6-luna');
+});
+
+test('omitted or blank extraction model inherits configured research model', () => {
+  assert.equal(readConfig({ OPENAI_MODEL: 'gpt-6-luna' }).extractionModel, 'gpt-6-luna');
+  assert.equal(readConfig({ OPENAI_MODEL: 'gpt-6-luna', OPENAI_EXTRACTION_MODEL: ' ' }).extractionModel, 'gpt-6-luna');
+  assert.equal(readConfig({ OPENAI_MODEL: 'gpt-5.5', OPENAI_EXTRACTION_MODEL: ' gpt-6-luna ' }).extractionModel, 'gpt-6-luna');
+});
+
+test('provider base URLs normalize roots, API bases and full Responses endpoints', () => {
+  assert.equal(responsesEndpoint(), 'https://api.openai.com/v1/responses');
+  for (const base of ['https://api.shuaiapi.com', 'https://api.shuaiapi.com/', 'https://api.shuaiapi.com/v1', 'https://api.shuaiapi.com/v1/', 'https://api.shuaiapi.com/v1/responses', 'https://api.shuaiapi.com/v1/responses/']) assert.equal(responsesEndpoint(base), 'https://api.shuaiapi.com/v1/responses');
+  assert.equal(responsesEndpoint('https://gateway.example.org/proxy/v1'), 'https://gateway.example.org/proxy/v1/responses');
+  assert.equal(readConfig({}).endpoint, 'https://api.openai.com/v1/responses');
+});
+
+test('both research stages use only the deployment-configured third-party target', async () => {
+  const calls = [];
+  const api = createAgentApi({ OPENAI_API_KEY: 'test-key-not-a-real-credential', OPENAI_BASE_URL: 'https://api.shuaiapi.com/v1/' }, { fetch: async (url, init) => {
+    calls.push({ url, redirect: init.redirect, payload: JSON.parse(init.body) });
+    return responseJson(calls.length === 1 ? researchFixture() : extractionResponse());
+  } });
+  const result = await api(query());
+  assert.equal(result.status, 200);
+  assert.equal(calls.length, 2);
+  for (const call of calls) {
+    assert.equal(call.url, 'https://api.shuaiapi.com/v1/responses');
+    assert.equal(call.redirect, 'error');
+  }
+  const body = await result.json();
+  assert.equal(body.sources[0].url, sourceUrl);
+  assert.equal(body.clues.length, 1);
+  const statusText = await (await api(new Request('http://127.0.0.1/api/agent/status'))).text();
+  assert.doesNotMatch(statusText, /shuaiapi|BASE_URL|test-key/);
+});
+
+test('invalid provider configuration fails closed without exposing URL, credentials or falling back', async () => {
+  const invalidBases = ['http://api.shuaiapi.com', 'https:/api.shuaiapi.com', 'https:api.shuaiapi.com', 'https://hidden-user:hidden-password@api.shuaiapi.com', 'https://@api.shuaiapi.com', 'https://api.shuaiapi.com?secret-query=hidden', 'https://api.shuaiapi.com?', 'https://api.shuaiapi.com#hidden', 'https://api.shuaiapi.com#', 'https://api.shuaiapi.com/v1/chat/completions', 'https://api.shuaiapi.com/v1/../v1', 'https://api.shuaiapi.com/%76%31', 'https://api.shuaiapi.com\\v1', 'https://api.shuaiapi.com/v1//responses', 'not a URL'];
+  for (const base of invalidBases) {
+    let calls = 0;
+    const api = createAgentApi({ OPENAI_API_KEY: 'test-key-not-a-real-credential', OPENAI_BASE_URL: base }, { fetch: () => { calls++; throw new Error('must not send'); } });
+    const status = await api(new Request('http://127.0.0.1/api/agent/status'));
+    assert.equal(status.status, 200);
+    const statusBody = await status.json();
+    assert.equal(statusBody.available, false);
+    assert.equal(statusBody.mode, 'configuration_error');
+    const response = await api(query());
+    assert.equal(response.status, 503);
+    const responseText = await response.text();
+    assert.equal(JSON.parse(responseText).error.code, 'PROVIDER_CONFIG_ERROR');
+    assert.doesNotMatch(responseText + JSON.stringify(statusBody), /hidden|shuaiapi|test-key|secret-query/);
+    assert.equal(calls, 0);
+  }
+});
+
+test('client cannot override the deployment provider target', async () => {
+  let calls = 0;
+  const api = createAgentApi({ OPENAI_API_KEY: 'test-key-not-a-real-credential', OPENAI_BASE_URL: 'https://api.shuaiapi.com' }, { fetch: () => { calls++; throw new Error('must not send'); } });
+  for (const property of ['OPENAI_BASE_URL', 'baseUrl', 'endpoint', 'api_url']) assert.equal((await api(query({ question: '查张氏', [property]: 'https://another-provider.example.org' }))).status, 400);
+  assert.equal(calls, 0);
+});
+
+test('provider errors never redirect or fall back to official API', async () => {
+  const calls = [];
+  const api = createAgentApi({ OPENAI_API_KEY: 'test-key-not-a-real-credential', OPENAI_BASE_URL: 'https://api.shuaiapi.com' }, { fetch: async (url, init) => {
+    calls.push({ url, redirect: init.redirect });
+    return new Response('provider-private-debug-body', { status: 404 });
+  } });
+  const response = await api(query());
+  assert.equal(response.status, 502);
+  assert.equal(calls.length, 1);
+  assert.equal(calls[0].url, 'https://api.shuaiapi.com/v1/responses');
+  assert.equal(calls[0].redirect, 'error');
+  assert.doesNotMatch(await response.text(), /provider-private-debug-body|shuaiapi|test-key/);
 });
 
 test('unknown references, duplicated IDs and evidence without citation are dropped', () => {

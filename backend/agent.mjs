@@ -1,5 +1,5 @@
 // Shared Fetch API handler for Node.js and a Worker. No SDK or client-side secrets.
-const OPENAI_ENDPOINT = 'https://api.openai.com/v1/responses';
+const DEFAULT_OPENAI_BASE_URL = 'https://api.openai.com';
 const clampInt = (value, fallback, min, max) => Math.max(min, Math.min(max, Number.isFinite(Number(value)) && value !== '' && value !== undefined ? Math.floor(Number(value)) : fallback));
 const trimText = (value, max = 2000) => typeof value === 'string' ? value.trim().slice(0, max) : '';
 const objectSchema = properties => ({ type: 'object', properties, required: Object.keys(properties), additionalProperties: false });
@@ -38,11 +38,42 @@ export class AgentError extends Error {
   constructor(code, message, status = 500) { super(message); this.code = code; this.status = status; }
 }
 
+// Only deployment-owned environment configuration controls the provider target.
+// A configuration error never falls back to a different provider.
+export function responsesEndpoint(baseUrl = DEFAULT_OPENAI_BASE_URL) {
+  const configurationError = () => new AgentError('PROVIDER_CONFIG_ERROR', '服务端检索地址配置不正确，请由网站管理员检查配置。', 503);
+  if (typeof baseUrl !== 'string') throw configurationError();
+  const value = baseUrl.trim();
+  if (!/^https:\/\//i.test(value) || /[\s\\?#]/.test(value)) throw configurationError();
+  let url;
+  try { url = new URL(value); }
+  catch { throw configurationError(); }
+  if (url.protocol !== 'https:' || url.username || url.password || !url.hostname || url.search || url.hash) throw configurationError();
+  // Encoded/dot paths have ambiguous routing semantics across API gateways.
+  const authority = value.slice(value.indexOf('://') + 3).split('/')[0];
+  const rawPath = value.slice(value.indexOf('://') + 3 + authority.length);
+  if (authority.includes('@') || /%|(?:^|\/)\.{1,2}(?:\/|$)/.test(rawPath)) throw configurationError();
+  let pathname = url.pathname.replace(/\/+$/, '');
+  if (!pathname) pathname = '/v1/responses';
+  else if (pathname.endsWith('/v1')) pathname += '/responses';
+  else if (!pathname.endsWith('/v1/responses')) throw configurationError();
+  if (pathname.includes('//')) throw configurationError();
+  url.pathname = pathname;
+  return url.href;
+}
+
 export function readConfig(env = {}) {
   const apiKey = trimText(env.OPENAI_API_KEY, 2000);
+  const model = trimText(env.OPENAI_MODEL, 100) || 'gpt-5.5';
+  let endpoint = null, configurationError = null;
+  try { endpoint = responsesEndpoint(env.OPENAI_BASE_URL === undefined || env.OPENAI_BASE_URL === '' ? DEFAULT_OPENAI_BASE_URL : env.OPENAI_BASE_URL); }
+  catch { configurationError = new AgentError('PROVIDER_CONFIG_ERROR', '服务端检索地址配置不正确，请由网站管理员检查配置。', 503); }
   return {
     apiKey,
-    model: trimText(env.OPENAI_MODEL, 100) || 'gpt-5.5',
+    endpoint,
+    configurationError,
+    model,
+    extractionModel: trimText(env.OPENAI_EXTRACTION_MODEL, 100) || model,
     timeoutMs: clampInt(env.WHOAMI_TIMEOUT_MS, 90000, 1000, 180000),
     maxToolCalls: clampInt(env.WHOAMI_MAX_TOOL_CALLS, 4, 1, 6),
     researchTokens: clampInt(env.WHOAMI_RESEARCH_TOKENS, 4500, 1000, 6000),
@@ -189,8 +220,9 @@ export function normalizeResult(extracted, research) {
 }
 
 async function callOpenAI(payload, config, fetchImpl, signal) {
+  if (config.configurationError || !config.endpoint) throw config.configurationError || new AgentError('PROVIDER_CONFIG_ERROR', '服务端检索地址配置不正确，请由网站管理员检查配置。', 503);
   let response;
-  try { response = await fetchImpl(OPENAI_ENDPOINT, { method: 'POST', headers: { 'Content-Type': 'application/json', Authorization: 'Bearer ' + config.apiKey }, body: JSON.stringify({ model: config.model, store: false, ...payload }), signal }); }
+  try { response = await fetchImpl(config.endpoint, { method: 'POST', redirect: 'error', headers: { 'Content-Type': 'application/json', Authorization: 'Bearer ' + config.apiKey }, body: JSON.stringify({ model: config.model, store: false, ...payload }), signal }); }
   catch (error) {
     if (signal.aborted) throw error;
     throw new AgentError('UPSTREAM_UNAVAILABLE', '检索服务连接失败，请稍后重试。', 502);
@@ -224,7 +256,7 @@ export async function runResearch(input, config, dependencies = {}, requestSigna
     if (!research.sources.some(source => source.cited)) return { answer: '目前没有获得可引用的公开资料，还不能判断家族来源。可以补充姓氏、祖籍，或家里记得的一段字辈，再继续查找。', sources: [], clues: [], mapNodes: [], routes: [], followup: { question: '你能补充一个村名、一段字辈，或祖辈所在地区吗？', options: ['不知道'] }, gaps: ['本次没有获得可引用的公开资料。'], warnings: ['未引用公开资料的回答不进入公共地图。'], usage: { ...usage, elapsedMs: Date.now() - started } };
     let extracted, extractionResponse;
     try {
-      extractionResponse = await callOpenAI({ instructions: EXTRACT_INSTRUCTIONS, input: JSON.stringify({ userQuestion: input.question, research: research.answer.slice(0, 14000), sources: research.sources }), text: { format: { type: 'json_schema', name: 'family_research_display', strict: true, schema: RESULT_SCHEMA } }, max_output_tokens: config.extractionTokens, reasoning: { effort: 'low' } }, config, fetchImpl, controller.signal);
+      extractionResponse = await callOpenAI({ model: config.extractionModel, instructions: EXTRACT_INSTRUCTIONS, input: JSON.stringify({ userQuestion: input.question, research: research.answer.slice(0, 14000), sources: research.sources.filter(source => source.cited) }), text: { format: { type: 'json_schema', name: 'family_research_display', strict: true, schema: RESULT_SCHEMA } }, max_output_tokens: config.extractionTokens, reasoning: { effort: 'low' } }, config, fetchImpl, controller.signal);
       usage.inputTokens += Number(extractionResponse.usage?.input_tokens) || 0;
       usage.outputTokens += Number(extractionResponse.usage?.output_tokens) || 0;
       const text = (extractionResponse.output || []).filter(item => item.type === 'message').flatMap(item => item.content || []).filter(content => content.type === 'output_text').map(content => content.text).join('');
@@ -248,13 +280,14 @@ export function createAgentApi(env = {}, dependencies = {}) {
   const now = dependencies.now || Date.now;
   return async function handle(request, { clientId = 'anonymous' } = {}) {
     const url = new URL(request.url);
-    if (url.pathname === '/api/agent/status' && request.method === 'GET') return json({ available: Boolean(config.apiKey), mode: config.apiKey ? 'research' : 'unconfigured', credentialsVerified: false, reason: config.apiKey ? null : '服务端尚未配置检索凭据；可以继续体验阮氏示例。', model: config.model, limits: { timeoutMs: config.timeoutMs, maxToolCalls: config.maxToolCalls, maxOutputTokens: config.researchTokens + config.extractionTokens, requestsPerMinute: config.perMinute, requestsPerHour: config.perHour } });
+    if (url.pathname === '/api/agent/status' && request.method === 'GET') return json({ available: Boolean(config.apiKey && config.endpoint && !config.configurationError), mode: config.configurationError ? 'configuration_error' : config.apiKey ? 'research' : 'unconfigured', credentialsVerified: false, reason: config.configurationError ? config.configurationError.message : config.apiKey ? null : '服务端尚未配置检索凭据；可以继续体验阮氏示例。', model: config.model, extractionModel: config.extractionModel, limits: { timeoutMs: config.timeoutMs, maxToolCalls: config.maxToolCalls, maxOutputTokens: config.researchTokens + config.extractionTokens, requestsPerMinute: config.perMinute, requestsPerHour: config.perHour } });
     if (url.pathname !== '/api/agent/query') return json({ error: { code: 'NOT_FOUND', message: '接口不存在。' } }, 404);
     if (request.method !== 'POST') return json({ error: { code: 'METHOD_NOT_ALLOWED', message: '请使用 POST 提交问题。' } }, 405, { Allow: 'POST' });
     const origin = request.headers.get('Origin');
     if (origin && origin !== url.origin) return json({ error: { code: 'ORIGIN_NOT_ALLOWED', message: '请从网站页面发起查询。' } }, 403);
     let reserved = false;
     try {
+      if (config.configurationError) throw config.configurationError;
       if (!config.apiKey) throw new AgentError('AGENT_NOT_CONFIGURED', '真实检索尚未启用：网站服务端需要配置 OPENAI_API_KEY。可以继续体验阮氏示例。', 503);
       const input = validateInput(await readBody(request, config.maxBodyBytes));
       const current = now();

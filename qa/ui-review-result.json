@@ -1,0 +1,176 @@
+{
+  "api": "Local mock only",
+  "results": [
+    {
+      "name": "Desktop initial width fits",
+      "pass": true,
+      "detail": true
+    },
+    {
+      "name": "Initial mode is explicit demo, no route",
+      "pass": true,
+      "detail": true
+    },
+    {
+      "name": "Sample starts a generation follow-up",
+      "pass": true,
+      "detail": true
+    },
+    {
+      "name": "Generation answer selects candidate without confirmation",
+      "pass": true,
+      "detail": true
+    },
+    {
+      "name": "Route is explicitly revealed",
+      "pass": true,
+      "detail": true
+    },
+    {
+      "name": "Desktop selected pin is visible and uncovered",
+      "pass": true,
+      "detail": true
+    },
+    {
+      "name": "Re-choosing generation clears old route immediately",
+      "pass": true,
+      "detail": true
+    },
+    {
+      "name": "Alternate branch hides former route",
+      "pass": true,
+      "detail": true
+    },
+    {
+      "name": "Whitespace form input gives visible validation",
+      "pass": true,
+      "detail": true
+    },
+    {
+      "name": "Negative surname input does not select Ruan",
+      "pass": true,
+      "detail": true
+    },
+    {
+      "name": "Unknown generation preserves uncertainty",
+      "pass": true,
+      "detail": true
+    },
+    {
+      "name": "Changing surname clears candidate and route",
+      "pass": true,
+      "detail": true
+    },
+    {
+      "name": "User text does not become executable HTML",
+      "pass": true,
+      "detail": true
+    },
+    {
+      "name": "Live mode removes example nodes and conversation",
+      "pass": true,
+      "detail": true
+    },
+    {
+      "name": "No-key query is unavailable without fake results",
+      "pass": true,
+      "detail": true
+    },
+    {
+      "name": "Mobile starts with reachable chat and composer",
+      "pass": true,
+      "detail": true
+    },
+    {
+      "name": "Mobile follow-up remains in chat",
+      "pass": true,
+      "detail": true
+    },
+    {
+      "name": "Route action opens mobile map",
+      "pass": true,
+      "detail": true
+    },
+    {
+      "name": "Mobile selected pin is visible and uncovered",
+      "pass": true,
+      "detail": true
+    },
+    {
+      "name": "Ask place returns to chat with draft focused",
+      "pass": true,
+      "detail": true
+    },
+    {
+      "name": "Mobile tabs preserve dialogue",
+      "pass": true,
+      "detail": true
+    },
+    {
+      "name": "Mobile other selected pin remains visible",
+      "pass": true,
+      "detail": true
+    },
+    {
+      "name": "Mock research disables send and shows progress",
+      "pass": true,
+      "detail": true
+    },
+    {
+      "name": "Busy Enter keeps draft and sends no duplicate",
+      "pass": true,
+      "detail": true
+    },
+    {
+      "name": "Reset discards late response and restores controls",
+      "pass": true,
+      "detail": true
+    },
+    {
+      "name": "Mock service failure offers reachable retry",
+      "pass": true,
+      "detail": true
+    },
+    {
+      "name": "Retry begins only one new request",
+      "pass": true,
+      "detail": true
+    },
+    {
+      "name": "Mock result has cited node and filters unsourced node/route",
+      "pass": true,
+      "detail": true
+    },
+    {
+      "name": "Unsafe source href is never rendered",
+      "pass": true,
+      "detail": true
+    },
+    {
+      "name": "Research answer citation is clickable near claim",
+      "pass": true,
+      "detail": true
+    },
+    {
+      "name": "Live result keeps chat and announces map changes",
+      "pass": true,
+      "detail": true
+    },
+    {
+      "name": "Old clue map button stays usable after next response",
+      "pass": true,
+      "detail": true
+    },
+    {
+      "name": "Old clue click throws no exception",
+      "pass": true,
+      "detail": 0
+    },
+    {
+      "name": "No uncaught frontend exceptions",
+      "pass": true,
+      "detail": true
+    }
+  ],
+  "exceptions": []
+}

@@ -223,7 +223,7 @@ export function normalizeResult(extracted, research) {
 async function callOpenAI(payload, config, fetchImpl, signal) {
   if (config.configurationError || !config.endpoint) throw config.configurationError || new AgentError('PROVIDER_CONFIG_ERROR', '服务端检索地址配置不正确，请由网站管理员检查配置。', 503);
   let response;
-  try { response = await fetchImpl(config.endpoint, { method: 'POST', redirect: 'error', headers: { 'Content-Type': 'application/json', Authorization: 'Bearer ' + config.apiKey }, body: JSON.stringify({ model: config.model, store: false, ...payload }), signal }); }
+  try { response = await fetchImpl(config.endpoint, { method: 'POST', redirect: 'manual', headers: { 'Content-Type': 'application/json', Authorization: 'Bearer ' + config.apiKey }, body: JSON.stringify({ model: config.model, store: false, ...payload }), signal }); }
   catch (error) {
     if (signal.aborted) throw error;
     if (config.diagnostics) {
@@ -238,6 +238,8 @@ async function callOpenAI(payload, config, fetchImpl, signal) {
     }
     throw new AgentError('UPSTREAM_UNAVAILABLE', '检索服务连接失败，请稍后重试。', 502);
   }
+  // Workers support manual redirects; explicitly refuse all 3xx without forwarding credentials.
+  if (response.status >= 300 && response.status < 400) throw new AgentError('PROVIDER_REDIRECT', '服务端检索地址返回了跳转，请由网站管理员检查配置。', 503);
   if (!response.ok) {
     // Never return upstream error bodies: they can echo credentials or request contents.
     if ([401, 403].includes(response.status)) throw new AgentError('PROVIDER_AUTH_ERROR', '服务端检索凭据不可用，请由网站管理员检查配置。', 503);

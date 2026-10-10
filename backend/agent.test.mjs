@@ -18,6 +18,21 @@ const extractionResponse = () => ({ status: 'completed', usage: { input_tokens: 
 const query = (body = { question: '湖北通山阮氏谱有哪些线索？' }, init = {}) => new Request('http://127.0.0.1/api/agent/query', { method: 'POST', headers: { 'Content-Type': 'application/json', ...init.headers }, body: JSON.stringify(body), ...init });
 const testConfig = () => readConfig({ OPENAI_API_KEY: 'test-key-not-a-real-credential' });
 
+test('provider redirect is refused before any second request or extraction', async () => {
+  const targets = [];
+  const api = createAgentApi({ OPENAI_API_KEY: 'test-key-not-a-real-credential', OPENAI_BASE_URL: 'https://api.shuaiapi.com' }, { fetch: async (url, init) => {
+    targets.push(url);
+    assert.equal(init.redirect, 'manual');
+    return new Response(null, { status: 307, headers: { Location: 'https://unrelated.example.org/collect' } });
+  } });
+  const reply = await api(query());
+  assert.equal(reply.status, 503);
+  const body = await reply.text();
+  assert.match(body, /PROVIDER_REDIRECT/);
+  assert.equal(body.includes('unrelated.example.org'), false);
+  assert.deepEqual(targets, ['https://api.shuaiapi.com/v1/responses']);
+});
+
 test('private connection diagnostics redact credentials and keep public errors generic', async () => {
   const key = 'fixture-credential-never-publish', logs = [], original = console.error;
   console.error = value => logs.push(value);
@@ -127,7 +142,7 @@ test('both research stages use only the deployment-configured third-party target
   assert.equal(calls.length, 2);
   for (const call of calls) {
     assert.equal(call.url, 'https://api.shuaiapi.com/v1/responses');
-    assert.equal(call.redirect, 'error');
+    assert.equal(call.redirect, 'manual');
   }
   const body = await result.json();
   assert.equal(body.sources[0].url, sourceUrl);
@@ -172,7 +187,7 @@ test('provider errors never redirect or fall back to official API', async () => 
   assert.equal(response.status, 502);
   assert.equal(calls.length, 1);
   assert.equal(calls[0].url, 'https://api.shuaiapi.com/v1/responses');
-  assert.equal(calls[0].redirect, 'error');
+  assert.equal(calls[0].redirect, 'manual');
   assert.doesNotMatch(await response.text(), /provider-private-debug-body|shuaiapi|test-key/);
 });
 

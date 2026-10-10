@@ -50,14 +50,14 @@
 
 默认90秒超时、4次内置工具调用、4500+3000输出 token 上限、单客户端每分钟4次、整个进程/Worker isolate每小时30次和最多2个并发。输入正文最多600字，对话取最后12条，每条1200字，总对话8000字。请求体最多32 KiB。
 
-本轮第三方部署计划采用研究 `gpt-5.5`、整理 `gpt-6-luna`、`WHOAMI_TIMEOUT_MS=180000`、`WHOAMI_MAX_TOOL_CALLS=2`；其他 token 和速率默认值保持不变。这是配置计划，尚未据此确认端到端查询在180秒内成功。
+当前第三方部署采用研究与整理均为 `gpt-6-luna`、`WHOAMI_TIMEOUT_MS=180000`、`WHOAMI_MAX_TOOL_CALLS=2`；其他 token 和速率默认值保持不变。出站请求使用 `redirect:manual` 并显式拒绝所有3xx，兼容部署的 Worker 运行时且不把凭据转发到跳转目标。管理员可临时设置 `WHOAMI_DIAGNOSTICS=1` 记录经过凭据和 URL 过滤的连接错误；默认关闭。
 
 网站允许公开访问和匿名提问，不要求注册或登录。这些限制控制单次工作量，不能承诺精确费用。速率和小时额度仅在当前 Node 进程或 Worker isolate 中有效，重启会重置，多个 isolate 不共享；当前没有持久化部署全局配额，不把这个 limiter 视为全局账单上限。
 
 ## 验证
 
-运行 `node --test backend/agent.test.mjs backend/server.test.cjs`，24项测试覆盖凭据缺失、服务端地址规范化与错误配置、目标不可被客户端覆盖、独立整理模型与来源过滤、输入与来源校验、跨域、速率、超时/取消、上游失败、两阶段提取、无引用降级、静态访问及秘密文件不可访问。自动测试使用明确的 mock，不调用真实 API。
+运行 `node --test backend/agent.test.mjs backend/server.test.cjs`，26项测试覆盖凭据缺失、服务端地址规范化与错误配置、目标不可被客户端覆盖、独立整理模型与来源过滤、跳转拒绝与日志秘密过滤、输入与来源校验、跨域、速率、超时/取消、上游失败、两阶段提取、无引用降级、静态访问及秘密文件不可访问。自动测试使用明确的 mock，不调用真实 API。
 
-已在用户授权的 `api.shuaiapi.com` 分阶段验证：模型列表返回200；`gpt-5.5` 的 Responses `web_search` 请求返回200，包含原生搜索调用和网页引用。一次完整查询已取得研究正文和4个来源，但原整理步骤达到90秒上限，按设计保留正文与来源；单独使用 `gpt-5.5` 整理也达到80秒上限。复用同一研究正文和4个引用来源，使用 `gpt-6-luna`、严格 RESULT_SCHEMA、2500输出 token 上限及 low reasoning，约10秒返回200 completed；JSON解析和归一化成功，保留3条线索与3个地图节点，缺少依据的记录及路线被过滤。这些是分阶段兼容性验证，尚未宣称新配置端到端查询成功，也不代表历史结论已经人工核实。
+2026-10-10，已通过公开网站的 `/api/agent/query` 完成用户授权的真实端到端验证：使用 `api.shuaiapi.com/v1` 和 `gpt-6-luna` 查询湖北通山阮氏宗谱公开目录，HTTP 200，客户端耗时约28秒、服务端约24.5秒；产生1次搜索和2次工具调用，正文引用3个来源，严格结构化输出通过解析和依据校验，保留3条线索和3个地图节点，无依据路线被过滤。此测试证明一次实际连接与查询成功，不代表历史结论已经人工核实，也不保证每次查询都能找到完整资料。
 
 官方依据：[网页搜索](https://developers.openai.com/api/docs/guides/tools-web-search)、[Responses 创建参数](https://developers.openai.com/api/reference/resources/responses/methods/create)、[结构化输出](https://developers.openai.com/api/docs/guides/structured-outputs)、[GPT-5.5 模型能力](https://developers.openai.com/api/docs/models/gpt-5.5)。

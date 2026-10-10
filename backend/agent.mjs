@@ -74,6 +74,7 @@ export function readConfig(env = {}) {
     configurationError,
     model,
     extractionModel: trimText(env.OPENAI_EXTRACTION_MODEL, 100) || model,
+    diagnostics: env.WHOAMI_DIAGNOSTICS === '1',
     timeoutMs: clampInt(env.WHOAMI_TIMEOUT_MS, 90000, 1000, 180000),
     maxToolCalls: clampInt(env.WHOAMI_MAX_TOOL_CALLS, 4, 1, 6),
     researchTokens: clampInt(env.WHOAMI_RESEARCH_TOKENS, 4500, 1000, 6000),
@@ -225,6 +226,16 @@ async function callOpenAI(payload, config, fetchImpl, signal) {
   try { response = await fetchImpl(config.endpoint, { method: 'POST', redirect: 'error', headers: { 'Content-Type': 'application/json', Authorization: 'Bearer ' + config.apiKey }, body: JSON.stringify({ model: config.model, store: false, ...payload }), signal }); }
   catch (error) {
     if (signal.aborted) throw error;
+    if (config.diagnostics) {
+      // Private diagnostics only; never log headers, payloads or unredacted credentials.
+      const message = String(error?.message || 'Unknown connection failure')
+        .split(config.apiKey).join('[redacted]')
+        .replace(/Bearer\s+[^\s"']+/gi, 'Bearer [redacted]')
+        .replace(/\bsk-[A-Za-z0-9_-]+/g, '[redacted]')
+        .replace(/https?:\/\/[^\s"']+/gi, '[url]').slice(0, 350);
+      console.error(JSON.stringify({ event: 'agent_upstream_connection_failure',
+        name: ['Error', 'TypeError', 'NetworkError', 'TimeoutError', 'AbortError'].includes(error?.name) ? error.name : 'Error', message }));
+    }
     throw new AgentError('UPSTREAM_UNAVAILABLE', '检索服务连接失败，请稍后重试。', 502);
   }
   if (!response.ok) {

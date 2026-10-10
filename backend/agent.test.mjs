@@ -18,6 +18,26 @@ const extractionResponse = () => ({ status: 'completed', usage: { input_tokens: 
 const query = (body = { question: '湖北通山阮氏谱有哪些线索？' }, init = {}) => new Request('http://127.0.0.1/api/agent/query', { method: 'POST', headers: { 'Content-Type': 'application/json', ...init.headers }, body: JSON.stringify(body), ...init });
 const testConfig = () => readConfig({ OPENAI_API_KEY: 'test-key-not-a-real-credential' });
 
+test('private connection diagnostics redact credentials and keep public errors generic', async () => {
+  const key = 'fixture-credential-never-publish', logs = [], original = console.error;
+  console.error = value => logs.push(value);
+  try {
+    const api = createAgentApi({ OPENAI_API_KEY: key, WHOAMI_DIAGNOSTICS: '1' }, { fetch: async () => {
+      throw new TypeError('Network failure ' + key + ' Bearer another-private-value https://example.org/private');
+    } });
+    const reply = await api(query());
+    assert.equal(reply.status, 502);
+    const publicBody = await reply.text();
+    assert.match(publicBody, /UPSTREAM_UNAVAILABLE/);
+    assert.equal(logs.length, 1);
+    assert.equal(JSON.parse(logs[0]).name, 'TypeError');
+    for (const secret of [key, 'another-private-value', 'https://example.org/private']) {
+      assert.equal(logs[0].includes(secret), false);
+      assert.equal(publicBody.includes(secret), false);
+    }
+  } finally { console.error = original; }
+});
+
 test('unconfigured status remains usable and query makes no provider request', async () => {
   const api = createAgentApi({}, { fetch: () => { throw new Error('must not call provider'); } });
   const status = await api(new Request('http://127.0.0.1/api/agent/status'));

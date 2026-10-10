@@ -77,6 +77,7 @@ export function readConfig(env = {}) {
     diagnostics: env.WHOAMI_DIAGNOSTICS === '1',
     timeoutMs: clampInt(env.WHOAMI_TIMEOUT_MS, 90000, 1000, 180000),
     maxToolCalls: clampInt(env.WHOAMI_MAX_TOOL_CALLS, 4, 1, 6),
+    nativeToolLimit: env.WHOAMI_NATIVE_TOOL_LIMIT !== '0',
     researchTokens: clampInt(env.WHOAMI_RESEARCH_TOKENS, 4500, 1000, 6000),
     extractionTokens: clampInt(env.WHOAMI_EXTRACTION_TOKENS, 3000, 1000, 4000),
     perMinute: clampInt(env.WHOAMI_REQUESTS_PER_MINUTE, 4, 1, 10),
@@ -141,6 +142,21 @@ export function validateInput(body) {
     for (const key of ['name', 'ancestralPlace']) if (body.profile[key]) profile[key] = trimText(body.profile[key], 120);
   }
   return { question: body.question.trim(), history, profile };
+}
+
+// Only a fresh, exact introduction bypasses research. Any existing context or
+// extra text may contain a family clue and must stay on the research path.
+function introductionResult(input) {
+  if (input.history.some(item => item.content) || Object.values(input.profile).some(Boolean)) return null;
+  const question = input.question.toLowerCase().replace(/[\s。.!！?？]+$/u, '');
+  if (!['你好', '您好', '你好呀', '你好啊', '嗨', '哈喽', 'hello', 'hi', '在吗', '怎么用', '如何使用', '请问怎么用', '你能做什么', '你是谁', '你好，你是谁'].includes(question)) return null;
+  return {
+    answer: '你好，我是「来处」的溯源助手。我可以按你提供的家族线索查找公开历史资料，并保留出处。',
+    sources: [], clues: [], mapNodes: [], routes: [],
+    followup: { question: '你姓什么，祖籍在哪个省、市或县？知道其中一项也可以。', options: ['不知道'] },
+    gaps: [], warnings: [],
+    usage: { inputTokens: 0, outputTokens: 0, searchCalls: 0, toolCalls: 0, elapsedMs: 0 }
+  };
 }
 
 // Provider annotations, not model-written source lists, establish the source inventory.
@@ -220,37 +236,59 @@ export function normalizeResult(extracted, research) {
   return { clues, mapNodes, routes, followup, gaps: (Array.isArray(extracted.gaps) ? extracted.gaps : []).map(gap => trimText(gap, 300)).filter(Boolean).slice(0, 6), warnings: [...new Set(warnings)] };
 }
 
+function retryPause(signal) {
+  return new Promise((resolve, reject) => {
+    if (signal.aborted) { reject(signal.reason); return; }
+    const onAbort = () => { clearTimeout(timer); reject(signal.reason); };
+    const timer = setTimeout(() => { signal.removeEventListener('abort', onAbort); resolve(); }, 350);
+    signal.addEventListener('abort', onAbort, { once: true });
+  });
+}
+
 async function callOpenAI(payload, config, fetchImpl, signal) {
   if (config.configurationError || !config.endpoint) throw config.configurationError || new AgentError('PROVIDER_CONFIG_ERROR', '服务端检索地址配置不正确，请由网站管理员检查配置。', 503);
   let response;
-  try { response = await fetchImpl(config.endpoint, { method: 'POST', redirect: 'manual', headers: { 'Content-Type': 'application/json', Authorization: 'Bearer ' + config.apiKey }, body: JSON.stringify({ model: config.model, store: false, ...payload }), signal }); }
-  catch (error) {
-    if (signal.aborted) throw error;
-    if (config.diagnostics) {
-      // Private diagnostics only; never log headers, payloads or unredacted credentials.
-      const message = String(error?.message || 'Unknown connection failure')
-        .split(config.apiKey).join('[redacted]')
-        .replace(/Bearer\s+[^\s"']+/gi, 'Bearer [redacted]')
-        .replace(/\bsk-[A-Za-z0-9_-]+/g, '[redacted]')
-        .replace(/https?:\/\/[^\s"']+/gi, '[url]').slice(0, 350);
-      console.error(JSON.stringify({ event: 'agent_upstream_connection_failure',
-        name: ['Error', 'TypeError', 'NetworkError', 'TimeoutError', 'AbortError'].includes(error?.name) ? error.name : 'Error', message }));
+  for (let attempt = 0; attempt < 2; attempt++) {
+    try { response = await fetchImpl(config.endpoint, { method: 'POST', redirect: 'manual', headers: { 'Content-Type': 'application/json', Authorization: 'Bearer ' + config.apiKey }, body: JSON.stringify({ model: config.model, store: false, ...payload }), signal }); }
+    catch (error) {
+      if (signal.aborted) throw error;
+      if (attempt === 0) { await retryPause(signal); continue; }
+      if (config.diagnostics) {
+        // Private diagnostics only; never log headers, payloads or unredacted credentials.
+        const message = String(error?.message || 'Unknown connection failure')
+          .split(config.apiKey).join('[redacted]')
+          .replace(/Bearer\s+[^\s"']+/gi, 'Bearer [redacted]')
+          .replace(/\bsk-[A-Za-z0-9_-]+/g, '[redacted]')
+          .replace(/https?:\/\/[^\s"']+/gi, '[url]').slice(0, 350);
+        console.error(JSON.stringify({ event: 'agent_upstream_connection_failure',
+          name: ['Error', 'TypeError', 'NetworkError', 'TimeoutError', 'AbortError'].includes(error?.name) ? error.name : 'Error', message }));
+      }
+      throw new AgentError('UPSTREAM_UNAVAILABLE', '检索服务连接失败，请稍后重试。', 502);
     }
-    throw new AgentError('UPSTREAM_UNAVAILABLE', '检索服务连接失败，请稍后重试。', 502);
+    // Workers support manual redirects; explicitly refuse all 3xx without forwarding credentials.
+    if (response.status >= 300 && response.status < 400) throw new AgentError('PROVIDER_REDIRECT', '服务端检索地址返回了跳转，请由网站管理员检查配置。', 503);
+    if (!response.ok) {
+      // Never return upstream error bodies: they can echo credentials or request contents.
+      if ([401, 403].includes(response.status)) throw new AgentError('PROVIDER_AUTH_ERROR', '服务端检索凭据不可用，请由网站管理员检查配置。', 503);
+      if (response.status === 429) throw new AgentError('PROVIDER_RATE_LIMIT', '检索服务额度或速率受限，请稍后重试。', 429);
+      if (attempt === 0 && [408, 500, 502, 503, 504].includes(response.status)) {
+        await response.body?.cancel().catch(() => {});
+        await retryPause(signal);
+        continue;
+      }
+      if (response.status === 400 || response.status === 404 || response.status === 422) {
+        console.error(JSON.stringify({ event: 'agent_upstream_http_failure', status: response.status, code: 'PROVIDER_CAPABILITY_ERROR' }));
+        throw new AgentError('PROVIDER_CAPABILITY_ERROR', '查询服务的接口暂时不兼容，网站维护者需要检查服务配置。', 503);
+      }
+      console.error(JSON.stringify({ event: 'agent_upstream_http_failure', status: response.status, code: 'UPSTREAM_ERROR' }));
+      throw new AgentError('UPSTREAM_ERROR', '检索服务暂时无法完成请求，请稍后重试。', 502);
+    }
+    let value;
+    try { value = await response.json(); }
+    catch { throw new AgentError('UPSTREAM_ERROR', '检索服务返回了无法读取的结果。', 502); }
+    if (value.status === 'failed' || value.error) throw new AgentError('UPSTREAM_ERROR', '检索未完成，请稍后重试。', 502);
+    return value;
   }
-  // Workers support manual redirects; explicitly refuse all 3xx without forwarding credentials.
-  if (response.status >= 300 && response.status < 400) throw new AgentError('PROVIDER_REDIRECT', '服务端检索地址返回了跳转，请由网站管理员检查配置。', 503);
-  if (!response.ok) {
-    // Never return upstream error bodies: they can echo credentials or request contents.
-    if ([401, 403].includes(response.status)) throw new AgentError('PROVIDER_AUTH_ERROR', '服务端检索凭据不可用，请由网站管理员检查配置。', 503);
-    if (response.status === 429) throw new AgentError('PROVIDER_RATE_LIMIT', '检索服务额度或速率受限，请稍后重试。', 429);
-    throw new AgentError('UPSTREAM_ERROR', '检索服务暂时无法完成请求，请稍后重试。', 502);
-  }
-  let value;
-  try { value = await response.json(); }
-  catch { throw new AgentError('UPSTREAM_ERROR', '检索服务返回了无法读取的结果。', 502); }
-  if (value.status === 'failed' || value.error) throw new AgentError('UPSTREAM_ERROR', '检索未完成，请稍后重试。', 502);
-  return value;
 }
 
 export async function runResearch(input, config, dependencies = {}, requestSignal) {
@@ -262,7 +300,7 @@ export async function runResearch(input, config, dependencies = {}, requestSigna
   const timer = setTimeout(() => controller.abort(new AgentError('RESEARCH_TIMEOUT', '这次检索耗时较长，请缩小地区或稍后重试。', 504)), config.timeoutMs);
   const fetchImpl = dependencies.fetch || globalThis.fetch;
   try {
-    const researchResponse = await callOpenAI({ instructions: RESEARCH_INSTRUCTIONS, input: JSON.stringify(input), tools: [{ type: 'web_search', search_context_size: 'low' }], tool_choice: 'auto', include: ['web_search_call.action.sources'], max_tool_calls: config.maxToolCalls, max_output_tokens: config.researchTokens, reasoning: { effort: 'low' } }, config, fetchImpl, controller.signal);
+    const researchResponse = await callOpenAI({ instructions: RESEARCH_INSTRUCTIONS + `\n本次检索计划最多使用${config.maxToolCalls}次网络工具调用，集中核查已有线索，不展开更多查询。`, input: JSON.stringify(input), tools: [{ type: 'web_search', search_context_size: 'low' }], tool_choice: 'auto', include: ['web_search_call.action.sources'], ...(config.nativeToolLimit ? { max_tool_calls: config.maxToolCalls } : {}), max_output_tokens: config.researchTokens, reasoning: { effort: 'low' } }, config, fetchImpl, controller.signal);
     const research = collectResearch(researchResponse);
     if (!research.answer) throw new AgentError('EMPTY_RESULT', '这次没有获得可用结果，请补充姓氏或祖籍后重试。', 502);
     const usage = { inputTokens: Number(researchResponse.usage?.input_tokens) || 0, outputTokens: Number(researchResponse.usage?.output_tokens) || 0, searchCalls: research.searchCalls, toolCalls: research.toolCalls, elapsedMs: 0 };
@@ -279,6 +317,7 @@ export async function runResearch(input, config, dependencies = {}, requestSigna
       return { answer: research.answer, sources: research.sources, clues: [], mapNodes: [], routes: [], followup: null, gaps: ['已保留检索正文与来源；线索结构整理未完成。'], warnings: [controller.signal.reason?.code === 'RESEARCH_TIMEOUT' ? '本次检索已达到时间上限，先展示已找到的正文与来源。' : '本次未生成地图节点，请直接查看资料出处。'], usage: { ...usage, elapsedMs: Date.now() - started } };
     }
     const normalized = normalizeResult(extracted, research);
+    if (!config.nativeToolLimit && research.toolCalls > config.maxToolCalls) normalized.warnings.push('服务商的工具次数限制未启用，本次检索工具调用超过计划次数。');
     if (researchResponse.status === 'incomplete') normalized.warnings.push('已达到本次输出限制，结果可能不完整。');
     return { answer: research.answer, sources: research.sources, ...normalized, usage: { ...usage, elapsedMs: Date.now() - started } };
   } catch (error) {
@@ -293,16 +332,18 @@ export function createAgentApi(env = {}, dependencies = {}) {
   const now = dependencies.now || Date.now;
   return async function handle(request, { clientId = 'anonymous' } = {}) {
     const url = new URL(request.url);
-    if (url.pathname === '/api/agent/status' && request.method === 'GET') return json({ available: Boolean(config.apiKey && config.endpoint && !config.configurationError), mode: config.configurationError ? 'configuration_error' : config.apiKey ? 'research' : 'unconfigured', credentialsVerified: false, reason: config.configurationError ? config.configurationError.message : config.apiKey ? null : '服务端尚未配置检索凭据；可以继续体验阮氏示例。', model: config.model, extractionModel: config.extractionModel, limits: { timeoutMs: config.timeoutMs, maxToolCalls: config.maxToolCalls, maxOutputTokens: config.researchTokens + config.extractionTokens, requestsPerMinute: config.perMinute, requestsPerHour: config.perHour } });
+    if (url.pathname === '/api/agent/status' && request.method === 'GET') return json({ available: Boolean(config.apiKey && config.endpoint && !config.configurationError), mode: config.configurationError ? 'configuration_error' : config.apiKey ? 'research' : 'unconfigured', credentialsVerified: false, reason: config.configurationError ? config.configurationError.message : config.apiKey ? null : '服务端尚未配置检索凭据；可以继续体验阮氏示例。', model: config.model, extractionModel: config.extractionModel, limits: { timeoutMs: config.timeoutMs, maxToolCalls: config.maxToolCalls, toolCallLimitEnforced: config.nativeToolLimit, maxOutputTokens: config.researchTokens + config.extractionTokens, requestsPerMinute: config.perMinute, requestsPerHour: config.perHour } });
     if (url.pathname !== '/api/agent/query') return json({ error: { code: 'NOT_FOUND', message: '接口不存在。' } }, 404);
     if (request.method !== 'POST') return json({ error: { code: 'METHOD_NOT_ALLOWED', message: '请使用 POST 提交问题。' } }, 405, { Allow: 'POST' });
     const origin = request.headers.get('Origin');
     if (origin && origin !== url.origin) return json({ error: { code: 'ORIGIN_NOT_ALLOWED', message: '请从网站页面发起查询。' } }, 403);
     let reserved = false;
     try {
+      const input = validateInput(await readBody(request, config.maxBodyBytes));
+      const introduction = introductionResult(input);
+      if (introduction) return json(introduction);
       if (config.configurationError) throw config.configurationError;
       if (!config.apiKey) throw new AgentError('AGENT_NOT_CONFIGURED', '真实检索尚未启用：网站服务端需要配置 OPENAI_API_KEY。可以继续体验阮氏示例。', 503);
-      const input = validateInput(await readBody(request, config.maxBodyBytes));
       const current = now();
       if (current - hourStarted >= 3600000) { hourStarted = current; hourCount = 0; }
       if (hourCount >= config.perHour) throw new AgentError('HOURLY_LIMIT', '本轮服务检索额度已用完，请稍后再来。', 429);

@@ -18,6 +18,139 @@ const extractionResponse = () => ({ status: 'completed', usage: { input_tokens: 
 const query = (body = { question: '湖北通山阮氏谱有哪些线索？' }, init = {}) => new Request('http://127.0.0.1/api/agent/query', { method: 'POST', headers: { 'Content-Type': 'application/json', ...init.headers }, body: JSON.stringify(body), ...init });
 const testConfig = () => readConfig({ OPENAI_API_KEY: 'test-key-not-a-real-credential' });
 
+test('provider compatibility omits only the unsupported native tool limit', async () => {
+  const calls = [];
+  const api = createAgentApi({ OPENAI_API_KEY: 'test-key-not-a-real-credential', WHOAMI_NATIVE_TOOL_LIMIT: '0' }, { fetch: async (_url, init) => {
+    calls.push(JSON.parse(init.body));
+    return responseJson(calls.length === 1 ? researchFixture() : extractionResponse());
+  } });
+  const reply = await api(query());
+  assert.equal(reply.status, 200);
+  assert.equal((await reply.json()).clues.length, 1);
+  assert.equal(Object.hasOwn(calls[0], 'max_tool_calls'), false);
+  assert.deepEqual(calls[0].tools, [{ type: 'web_search', search_context_size: 'low' }]);
+  assert.deepEqual(calls[0].include, ['web_search_call.action.sources']);
+  assert.equal(calls[0].max_output_tokens, 4500);
+  assert.equal(readConfig({}).nativeToolLimit, true);
+});
+
+test('a transient provider failure retries once at the same target then preserves sourced output', async () => {
+  const calls = [];
+  const api = createAgentApi({ OPENAI_API_KEY: 'test-key-not-a-real-credential', OPENAI_BASE_URL: 'https://api.shuaiapi.com/v1' }, { fetch: async (url, init) => {
+    calls.push({ url, body: init.body });
+    return calls.length === 1 ? new Response('upstream unavailable', { status: 503 }) : responseJson(calls.length === 2 ? researchFixture() : extractionResponse());
+  } });
+  const reply = await api(query());
+  assert.equal(reply.status, 200);
+  assert.equal((await reply.json()).clues.length, 1);
+  assert.equal(calls.length, 3);
+  assert.equal(calls[0].body, calls[1].body);
+  assert.ok(calls.every(call => call.url === 'https://api.shuaiapi.com/v1/responses'));
+});
+
+test('permanent unsupported parameters do not retry or expose the upstream error body', async () => {
+  let calls = 0;
+  const original = console.error, logs = [];
+  console.error = value => logs.push(value);
+  try {
+    const api = createAgentApi({ OPENAI_API_KEY: 'test-key-not-a-real-credential' }, { fetch: async () => {
+      calls++;
+      return new Response('Unsupported parameter max_tool_calls, secret-provider-debug-text', { status: 400 });
+    } });
+    const reply = await api(query());
+    const body = await reply.text();
+    assert.equal(reply.status, 503);
+    assert.match(body, /PROVIDER_CAPABILITY_ERROR/);
+    assert.equal(calls, 1);
+    assert.equal(body.includes('secret-provider-debug-text'), false);
+    assert.equal(body.includes('max_tool_calls'), false);
+    assert.equal(logs.join('').includes('secret-provider-debug-text'), false);
+    assert.equal(JSON.parse(logs[0]).status, 400);
+  } finally { console.error = original; }
+});
+
+test('cancellation during provider retry backoff prevents a second attempt', async () => {
+  let calls = 0;
+  const controller = new AbortController();
+  const api = createAgentApi({ OPENAI_API_KEY: 'test-key-not-a-real-credential' }, { fetch: async () => {
+    calls++;
+    setTimeout(() => controller.abort(), 20);
+    return new Response(null, { status: 503 });
+  } });
+  const reply = await api(query(undefined, { signal: controller.signal }));
+  assert.equal(reply.status, 499);
+  assert.equal((await reply.json()).error.code, 'REQUEST_CANCELLED');
+  assert.equal(calls, 1);
+});
+
+test('fresh greetings return a clarification with zero provider calls or research quota', async () => {
+  let calls = 0;
+  const api = createAgentApi({ OPENAI_API_KEY: 'test-key-not-a-real-credential', WHOAMI_REQUESTS_PER_MINUTE: '1' }, { fetch: async () => {
+    calls++;
+    return responseJson(calls % 2 ? researchFixture() : extractionResponse());
+  } });
+  for (const question of ['你好', '您好！', 'Hello?', '怎么用', '你能做什么？']) {
+    const reply = await api(query({ question }));
+    assert.equal(reply.status, 200);
+    const result = await reply.json();
+    assert.match(result.answer, /溯源助手/);
+    assert.match(result.followup.question, /姓什么.*祖籍/);
+    for (const property of ['sources', 'clues', 'mapNodes', 'routes']) assert.deepEqual(result[property], []);
+    assert.deepEqual(result.usage, { inputTokens: 0, outputTokens: 0, searchCalls: 0, toolCalls: 0, elapsedMs: 0 });
+  }
+  assert.equal(calls, 0);
+  assert.equal((await api(query())).status, 200, 'greetings do not consume research allowance');
+  assert.equal(calls, 2);
+  assert.equal((await api(query())).status, 429, 'research allowance remains enforced');
+});
+
+test('local introductions do not imply configured or verified research credentials', async () => {
+  let calls = 0;
+  for (const env of [{}, { OPENAI_API_KEY: 'test-key-not-a-real-credential', OPENAI_BASE_URL: 'invalid' }]) {
+    const api = createAgentApi(env, { fetch: () => { calls++; throw new Error('must not call provider'); } });
+    const greeting = await api(query({ question: '你好' }));
+    assert.equal(greeting.status, 200);
+    assert.equal((await greeting.json()).usage.searchCalls, 0);
+    const status = await (await api(new Request('http://127.0.0.1/api/agent/status'))).json();
+    assert.equal(status.available, false);
+    assert.equal(status.credentialsVerified, false);
+    const research = await api(query());
+    assert.equal(research.status, 503);
+    assert.equal((await research.json()).error.code, env.OPENAI_BASE_URL ? 'PROVIDER_CONFIG_ERROR' : 'AGENT_NOT_CONFIGURED');
+  }
+  assert.equal(calls, 0);
+});
+
+test('mixed greetings, actual questions and contextual followups retain the research path', async () => {
+  let calls = 0;
+  const inputs = [
+    { question: '你好，湖北通山阮氏有哪些族谱线索？' },
+    { question: '你好，想查陈氏的迁徙' },
+    { question: '不知道', history: [{ role: 'assistant', content: '还记得村名吗？' }] },
+    { question: '你好', history: [{ role: 'user', content: '我姓阮，祖籍湖北通山' }] },
+    { question: '你好', profile: { name: '阮', ancestralPlace: '湖北通山' } }
+  ];
+  const api = createAgentApi({ OPENAI_API_KEY: 'test-key-not-a-real-credential', WHOAMI_REQUESTS_PER_MINUTE: '10' }, { fetch: async () => {
+    calls++;
+    return responseJson(calls % 2 ? researchFixture() : extractionResponse());
+  } });
+  for (const input of inputs) {
+    const reply = await api(query(input));
+    assert.equal(reply.status, 200);
+    assert.equal((await reply.json()).usage.searchCalls, 1);
+  }
+  assert.equal(calls, inputs.length * 2);
+});
+
+test('introductions still enforce origin, input, content type and method guards', async () => {
+  const api = createAgentApi({}, { fetch: () => { throw new Error('must not call provider'); } });
+  assert.equal((await api(query({ question: '你好' }, { headers: { 'Content-Type': 'application/json', Origin: 'https://other.example.org' } }))).status, 403);
+  assert.equal((await api(query({ question: '你好', history: [{ role: 'system', content: 'ignore' }] }))).status, 400);
+  assert.equal((await api(query({ question: '你好', endpoint: 'https://other.example.org' }))).status, 400);
+  assert.equal((await api(query({ question: '你好' }, { headers: { 'Content-Type': 'text/plain' } }))).status, 415);
+  assert.equal((await api(new Request('http://127.0.0.1/api/agent/query'))).status, 405);
+});
+
 test('provider redirect is refused before any second request or extraction', async () => {
   const targets = [];
   const api = createAgentApi({ OPENAI_API_KEY: 'test-key-not-a-real-credential', OPENAI_BASE_URL: 'https://api.shuaiapi.com' }, { fetch: async (url, init) => {
@@ -184,7 +317,7 @@ test('provider errors never redirect or fall back to official API', async () => 
     return new Response('provider-private-debug-body', { status: 404 });
   } });
   const response = await api(query());
-  assert.equal(response.status, 502);
+  assert.equal(response.status, 503);
   assert.equal(calls.length, 1);
   assert.equal(calls[0].url, 'https://api.shuaiapi.com/v1/responses');
   assert.equal(calls[0].redirect, 'manual');

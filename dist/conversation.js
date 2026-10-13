@@ -33,7 +33,7 @@ function saveConversation(){
     errorHidden:$('form-error').hidden,errorText:$('form-error').textContent,scrollTop:$('thread-scroll').scrollTop,view:$('workspace').dataset.view,
     stops:stops.slice(),routes:currentRoutes.slice(),routeRevealed:window.routeRevealed,active,historyHidden:$('history').hidden,historyExpanded:$('history').querySelector('details').open,
     heading:$('map-heading').textContent,caption:$('route-caption').textContent,timelineTitle:$('timeline-title').textContent,toast:$('map-toast').textContent,toastHidden:$('map-toast').hidden,
-    camera:ready?{center:map.getCenter().toArray(),zoom:map.getZoom(),pitch:map.getPitch(),bearing:map.getBearing(),padding:map.getPadding()}:null
+    camera:ready?{center:map.getCenter().toArray(),zoom:map.getZoom(),pitch:map.getPitch(),bearing:map.getBearing(),frame:mapFrame}:null
   };
 }
 function restoreConversation(state){
@@ -47,7 +47,7 @@ function restoreConversation(state){
   showView(state.view);updateServiceNotice();setBusy(false);
   for(const button of $('conversation').querySelectorAll('button'))retryRefreshers.get(button)?.();
   const mode=conversationMode,version=requestVersion;
-  requestAnimationFrame(()=>{if(mode!==conversationMode||version!==requestVersion)return;$('thread-scroll').scrollTop=state.scrollTop;if(ready&&state.camera){map.stop();map.resize();map.jumpTo(state.camera);}});
+  requestAnimationFrame(()=>{if(mode!==conversationMode||version!==requestVersion)return;$('thread-scroll').scrollTop=state.scrollTop;if(ready&&state.camera){restoreMapCamera(state.camera);}});
 }
 function resetConversation(){cancelResearch(false);requestVersion++;delete conversationSessions[conversationMode];query=null;branch=null;researchHistory=[];conversationStage='welcome';$('conversation').replaceChildren();$('suggestions').replaceChildren();$('question').value='';$('question').style.height='';$('form-error').hidden=true;$('welcome').hidden=false;if(conversationMode==='demo')useDemoMap();else useLiveMap();showView('chat');updateServiceNotice();welcomeSuggestions();setBusy(false);}
 function switchMode(mode,userInitiated=true){if(!['demo','live'].includes(mode))return;if(userInitiated)modeTouched=true;if(mode===conversationMode)return;cancelResearch();requestVersion++;saveConversation();conversationMode=mode;const state=conversationSessions[mode];if(state)restoreConversation(state);else resetConversation();}

@@ -37,6 +37,7 @@ const fixture = (id, name, coordinates, answer) => ({
     const pending = new Map();
     socket.addEventListener('message', event => {
       const data = JSON.parse(event.data);
+      if(data.method==='Fetch.requestPaused')call('Fetch.fulfillRequest',{requestId:data.params.requestId,responseCode:200,responseHeaders:[{name:'Content-Type',value:'image/png'},{name:'Cache-Control',value:'public,max-age=604800'}],body:'iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVQIHWP4z8DwHwAFgAI/ScLbtAAAAABJRU5ErkJggg=='}).catch(()=>{});
       if (data.method === 'Runtime.exceptionThrown') exceptions.push(data.params.exceptionDetails);
       if (data.id) {
         const entry = pending.get(data.id); pending.delete(data.id);
@@ -82,7 +83,7 @@ const fixture = (id, name, coordinates, answer) => ({
       const reply = await call('Page.captureScreenshot', { format: 'png', captureBeyondViewport: false });
       fs.writeFileSync(path.join(profile, name), Buffer.from(reply.data, 'base64'));
     }
-    await call('Runtime.enable'); await call('Page.enable');
+    await call('Runtime.enable'); await call('Page.enable'); await call('Fetch.enable',{patterns:[{urlPattern:'*://tile.openstreetmap.org/*'}]});
     await call('Page.addScriptToEvaluateOnNewDocument', { source: `
       window.__queries=[]; window.__queryResolvers=[];
       const originalFetch=window.fetch.bind(window);
@@ -107,7 +108,7 @@ const fixture = (id, name, coordinates, answer) => ({
     await waitFor(`typeof switchMode==='function'&&conversationMode==='live'&&ready`, 'page and map ready');
 
 
-    await waitFor('!map.isMoving()', 'initial national camera');
+    await waitFor('!map.isMoving()', 'initial full-screen map');await evaluate('showChina(false,0)');await waitFor('!map.isMoving()', 'national camera');
     await evaluate(`window.__nationalCoverage=()=>{
       const padding=mapPadding(),size=map.getContainer().getBoundingClientRect();
       const points=chinaAreas.flatMap(area=>area.rings[0].map(coordinate=>map.project(coordinate)));
@@ -116,8 +117,8 @@ const fixture = (id, name, coordinates, answer) => ({
       const pass=Math.abs(center.lng-expectedLng)<0.1&&size.width>0&&size.height>0&&actual.left>=padding.left-3&&actual.right<=size.width-padding.right+3&&actual.top>=padding.top-3&&actual.bottom<=size.height-padding.bottom+3;
       return {pass,actual,center:center.toArray(),padding,size:{width:size.width,height:size.height},zoom:map.getZoom(),pitch:map.getPitch(),bearing:map.getBearing(),cameraPadding:map.getPadding()};
     };`);
-    await check('Initial tilted national map fits between page overlays', 'window.__nationalCoverage().pass||window.__nationalCoverage()');
-    await check('China map uses local province vectors only', "!!map.getSource('provinces')&&!map.getSource('basemap')&&!map.getSource('elevation')&&!Object.values(map.getStyle().sources).some(source=>source.type==='raster'||source.type==='raster-dem')&&window.provinceData.features.filter(f=>f.properties.name).length===34");
+    await check('National map fits between page overlays', 'window.__nationalCoverage().pass||window.__nationalCoverage()');
+    await check('Detailed basemap is restricted by the local China mask', "!!map.getSource('provinces')&&!!map.getSource('basemap')&&!!map.getSource('china-mask')&&!map.getSource('elevation')&&map.getStyle().sources.basemap.bounds[0]===chinaExtent[0]&&map.getStyle().sources.basemap.bounds[2]===chinaExtent[2]&&window.provinceData.features.filter(f=>f.properties.name).length===34");
     await check('China polygon filter accepts domestic regions and rejects foreign cities', "[[116.40,39.90],[114.49,29.6],[87.6177,43.7928],[91.1322,29.6604],[109.7549,19.1898],[121.5091,25.0443],[114.173355,22.320048],[113.54909,22.198951]].every(isChinaCoordinate)&&![[139.69,35.68],[13.4,52.5],[106.92,47.91],[NaN,30],[null,30]].some(isChinaCoordinate)");
     await click('#view-flat'); await waitFor('Math.abs(map.getPitch())<0.1&&!map.isMoving()', 'flat view');
     await check('Flat control changes pitch and pressed state', "document.getElementById('view-flat').getAttribute('aria-pressed')==='true'&&Math.abs(map.getPitch())<0.1");
@@ -229,8 +230,10 @@ const fixture = (id, name, coordinates, answer) => ({
     await delay(200);
     await check('National camera adapts after mobile to desktop resize', 'window.__nationalCoverage().pass||window.__nationalCoverage()');
 
+    await call('Emulation.setDeviceMetricsOverride',{width:390,height:844,deviceScaleFactor:1,mobile:true});await evaluate("showView('map');showHomeMap(0)");await delay(100);await click('.maplibregl-ctrl-zoom-in');await waitFor('!map.isMoving()','manual zoom');await evaluate('window.__manualZoom=map.getZoom()');await click('#tab-chat');await click('#tab-map');await delay(150);
+    await check('Mobile view switching preserves manual map zoom',"mapFrame==='free'&&Math.abs(map.getZoom()-window.__manualZoom)<0.01");
     await check('No uncaught frontend exceptions', JSON.stringify(exceptions.length === 0));
-    const report = { api: 'All Agent requests mocked; no credentials read or real research requested', results, exceptions };
+    const report = { api: 'All Agent and raster tile requests mocked; no credentials read or real research requested', results, exceptions };
     fs.writeFileSync(path.join(profile, 'result.json'), JSON.stringify(report, null, 2));
     console.log(JSON.stringify(report, null, 2));
     if (results.some(result => !result.pass)) process.exitCode = 1;

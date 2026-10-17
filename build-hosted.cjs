@@ -2,7 +2,7 @@
 const fs=require('node:fs'),path=require('node:path');
 const root=__dirname, output=path.join(root,'dist','server');
 fs.mkdirSync(output,{recursive:true});
-const files=['index.html','style.css','app.js','conversation.js','geography.js','vendor/maplibre-gl.js','vendor/maplibre-gl.css'];
+const files=['index.html','style.css','map-detail.css','china-mask.js','map-detail.js','app.js','conversation.js','geography.js','vendor/maplibre-gl.js','vendor/maplibre-gl.css'];
 const contentTypes={'.html':'text/html; charset=utf-8','.css':'text/css; charset=utf-8','.js':'application/javascript; charset=utf-8'};
 const assets={};
 for(const file of files)assets['/'+file]=[contentTypes[path.extname(file)],fs.readFileSync(path.join(root,'dist',file),'utf8')];

@@ -1,0 +1,52 @@
+/* Detailed map fills the viewport; reading surfaces float above it. */
+.site-header{position:fixed;inset:0 0 auto;height:72px;background:#faf8f1e8;backdrop-filter:blur(16px);box-shadow:0 1px 15px #28443709}
+main{position:fixed;inset:0;height:100dvh;min-height:0}.map-shell{background:#e8efeb}
+.conversation-panel{left:24px;top:96px;bottom:24px;width:360px;border-color:#ffffffb8;background:#faf8f1f5;box-shadow:0 12px 42px #26463320;padding:22px;border-radius:18px}
+.welcome{padding-top:24px}.welcome h1{font-size:32px}.welcome p{font-size:15px}
+.map-top{left:412px;right:80px;top:96px;gap:16px}.map-top>div{padding:12px 17px;background:#fffdf5ee;border-color:#fff9;box-shadow:0 5px 24px #30493a13}.map-top h2{font-size:24px;line-height:1.35}
+.map-caption{left:412px;top:186px;background:#fffdf4e6;max-width:calc(100% - 490px)}
+.map-view-controls{left:auto;right:24px;top:auto;bottom:164px;padding:5px;gap:4px;background:#fffdf5f5;box-shadow:0 5px 22px #25402c1a;border-color:#c9d5c1}.map-view-controls button{min-width:44px;padding:8px 11px}
+.maplibregl-ctrl-top-right{top:96px;right:16px}.maplibregl-ctrl-bottom-left{left:412px;bottom:147px}.maplibregl-ctrl-scale{background:#fffdf0d9;border-color:#677d69;color:#48614e;font-size:10px}
+.map-detail-meta{position:absolute;left:412px;bottom:164px;display:flex;align-items:center;gap:8px;font-size:11px;color:#536a5c;padding:8px 11px;background:#fffdf2e8;border:1px solid #fff9;border-radius:8px;pointer-events:none}
+.map-detail-meta>span:first-child{font-weight:600;color:#2f503d}.meta-dot{width:3px;height:3px;border-radius:50%;background:#8a9b87}.map-detail-meta button{pointer-events:auto;border:0;border-left:1px solid #ccd8c4;background:none;color:#815e31;font-size:11px;padding:0 0 0 8px;text-decoration:underline}
+.map-instruction{left:412px;bottom:209px;opacity:0.9;font-size:11px;background:#fffdf4cc}#map-toast{left:412px;bottom:209px;font-size:12px}
+.timeline{left:412px;right:24px;bottom:26px;padding:14px 17px;background:#fffdf4f0;box-shadow:0 5px 30px #253e2418;border-color:#fffc}
+.timeline-label{font-size:15px;color:#284739}#stops{counter-reset:waypoint;justify-content:flex-start;gap:10px;margin-top:11px}
+.stop{counter-increment:waypoint;min-width:104px;border:1px solid #d8e0d1;background:#f1f4e9a8;padding:8px 12px;border-radius:8px;color:#526955;flex:1}
+.stop:before{content:counter(waypoint,decimal-leading-zero);display:inline-flex;align-items:center;justify-content:center;width:22px;height:22px;margin-right:7px;border:0;border-radius:50%;background:#e3eadb;font-size:10px;font-family:system-ui;color:#738567}
+.stop small{margin-left:29px;font-size:10px;color:#77836e}.stop.active{background:#e5eedb;border-color:#aabd98;color:#294d36}.stop.active:before{background:#355a40;color:#fffdf0}
+.pin{display:flex;align-items:center;gap:7px;min-height:39px;padding:5px 12px 5px 5px;border-color:#b6a376;background:#fffdf3;box-shadow:0 4px 18px #233f2828;font-size:13px;color:#4d593b}
+.pin:before{content:attr(data-number);display:flex;align-items:center;justify-content:center;border-radius:50%;width:26px;height:26px;background:#e8eddc;color:#5c714b;font:11px system-ui}
+.pin.active{background:#31523e;border-color:#31523e;box-shadow:0 4px 20px #254d3640}.pin.active:before{background:#f1e7c8;color:#5e5a32}
+.history{right:24px;top:236px;width:318px;max-height:calc(100% - 465px);border-radius:16px;padding:20px;background:#fffdf5f7;border:1px solid #fff9;box-shadow:0 12px 45px #1e3f2c23}
+.history-heading{gap:10px}.history-heading .step{font-size:11px;color:#8d754d;letter-spacing:1px}.history-heading button{font-size:11px}
+.location-heading{justify-content:space-between;margin-top:12px}.location-heading h2{font-size:32px;color:#28483a;letter-spacing:2px}.evidence{font-size:10px;padding:3px 7px;background:#f5f0df;border-color:#e1d3b1;border-radius:5px}
+.location-subtitle{font-size:12px;color:#76816e;line-height:1.7;margin:5px 0 8px}.place-precision{display:inline-block;color:#6d8060;background:#edf2e6;border:1px solid #dce5ce;padding:2px 7px;border-radius:5px;font-size:10px;margin-bottom:15px}
+.history>p:not(.location-subtitle){font-size:13px;line-height:1.9;color:#4c614d}.history details{font-size:12px;padding-top:13px;margin-bottom:14px;border-color:#e1e6d8}.history summary{font-size:12px;color:#8b7448}.history a{display:block;overflow-wrap:anywhere;line-height:1.75;margin:7px 0}
+.history-ask{background:#35543d;color:#fffbed;border-color:#35543d;font-size:13px;padding:11px;border-radius:8px}.history-ask:hover{background:#45664a}.history-more{display:none}.map-status{left:412px;top:230px}
+@media(min-width:1550px){.conversation-panel{left:28px;width:380px}.map-top,.map-caption,.map-instruction,.map-detail-meta,.map-status,#map-toast{left:438px}.timeline{left:438px}.maplibregl-ctrl-bottom-left{left:438px}.map-view-controls{left:auto}.history{width:330px}}
+@media(min-width:761px) and (max-width:1100px){.conversation-panel{left:18px;width:310px;padding:18px}.map-top,.map-caption,.map-instruction,.map-detail-meta,.map-status,#map-toast{left:352px}.timeline{left:352px}.maplibregl-ctrl-bottom-left{left:352px}.map-view-controls{left:auto;bottom:170px}.map-caption{max-width:calc(100% - 400px)}.history{width:275px}.map-detail-meta{bottom:221px}.map-instruction{display:none}}
+@media(max-width:760px){
+ .site-header{position:relative;height:64px;background:#faf8f1}.mobile-tabs{position:relative}main{position:relative;inset:auto;height:calc(100dvh - 114px);min-height:480px}
+ .conversation-panel{left:0;top:0;bottom:0;width:100%;height:100%;padding:16px 18px 10px;border:0;border-radius:0;box-shadow:none}
+ .map-top{left:14px;right:62px;top:14px;gap:8px}.map-top>div{padding:10px 12px;max-width:calc(100% - 80px)}.map-top h2{font-size:18px;letter-spacing:0}.map-top .eyebrow{font-size:10px;letter-spacing:1px}.map-button{font-size:11px;padding:8px 10px}
+ .map-caption{left:14px;top:101px;max-width:calc(100% - 28px);font-size:10px;padding:6px 9px}
+ .map-view-controls{left:14px;right:auto;bottom:auto;top:145px;padding:3px;gap:2px}.map-view-controls button{min-width:42px;min-height:36px;padding:6px 8px;font-size:11px}
+ .maplibregl-ctrl-top-right{top:14px;right:6px}.maplibregl-ctrl-bottom-left{left:14px;bottom:139px}
+ .timeline{left:14px;right:14px;bottom:30px;padding:11px 12px;max-height:110px}.timeline-label{font-size:12px}.timeline-label>span:last-child{font-size:10px}#stops{gap:6px;margin-top:9px;padding-bottom:0}.stop{min-width:93px;flex:0 0 auto;padding:5px 9px;font-size:12px}.stop:before{width:17px;height:17px;font-size:9px;margin-right:5px}.stop small{font-size:9px;margin-left:22px}
+ .history{top:auto;left:14px;right:14px;bottom:154px;width:auto;max-height:176px;padding:13px 15px;border-radius:14px;overflow:auto}
+ .history-heading .step{font-size:10px;letter-spacing:0}.history-heading button{min-height:24px}.location-heading{margin-top:3px}.location-heading h2{font-size:24px;line-height:1.25}.location-subtitle{font-size:10px;margin:3px 0 5px}.place-precision{position:absolute;right:15px;top:73px;font-size:9px;margin:0;padding:1px 5px}
+ .history>p:not(.location-subtitle){font-size:11px;line-height:1.65;margin:6px 0 8px}.history:not(.expanded)>#history-copy{display:-webkit-box;-webkit-line-clamp:2;-webkit-box-orient:vertical;overflow:hidden;padding-right:0}
+ .history:not(.expanded)>details{display:none}.history.expanded{max-height:calc(100% - 355px)}.history.expanded>.place-precision{position:static;margin-bottom:5px}
+ .history-more{display:inline-block;border:0;background:none;color:#806a3f;font-size:11px;padding:6px 0;min-height:28px;width:32%;text-align:left}.history-ask{width:66%;font-size:11px;padding:7px}
+ .map-detail-meta{left:14px;bottom:154px;font-size:9px;padding:6px 9px;gap:5px}.map-shell:has(.history:not([hidden])) .map-detail-meta,.map-shell:has(.history:not([hidden])) .maplibregl-ctrl-scale{display:none}
+ .map-shell:has(.history:not([hidden])) .map-caption{display:none}.map-instruction{display:none}.map-status{left:14px;top:195px}#map-toast{display:none}
+}
+
+/* Keep credits clear of the mobile clue cards and action rows fully visible. */
+@media(max-width:760px){.history{max-height:190px}.timeline{bottom:53px}.maplibregl-ctrl-attrib{font-size:9px;max-width:100%}.maplibregl-ctrl-bottom-right{bottom:0}.maplibregl-ctrl-bottom-left{bottom:158px}.history{bottom:174px}.map-detail-meta{bottom:174px}.map-view-controls{top:137px}}
+
+/* Separate scale, map status and clue cards. */
+.maplibregl-ctrl-bottom-left{bottom:207px}.map-instruction,#map-toast{display:none}
+@media(min-width:761px) and (max-width:1100px){.maplibregl-ctrl-bottom-left{bottom:264px}}
+@media(max-width:760px){.maplibregl-ctrl-bottom-left{bottom:221px}}

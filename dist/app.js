@@ -8,7 +8,7 @@ const demoStops = [
 ];
 let stops=demoStops.slice(),map,ready=false,active=null,branch=null,query=null,currentRoutes=[];
 const markers=[];const provinceMarkers=[];
-let mapFrame='china',pendingMapCamera=null,cameraIntentVersion=0;
+let mapFrame='explore',pendingMapCamera=null,cameraIntentVersion=0;
 const reduced=window.matchMedia('(prefers-reduced-motion: reduce)').matches;
 const chinaAreas=window.provinceData.features.flatMap(feature=>{
  const geometry=feature.geometry;
@@ -43,7 +43,7 @@ function mapVisible(){const r=$('map').getBoundingClientRect();return r.width>0&
 function mapPadding(){
  const shell=$('map').getBoundingClientRect(),mobile=window.innerWidth<=760;
  const detail=$('history').hidden?0:$('history').getBoundingClientRect().height;
- const padding={top:mobile?(detail?195:224):238,bottom:mobile?(detail?detail+145:170):165,left:mobile?24:document.querySelector('.conversation-panel').getBoundingClientRect().right+35,right:mobile?24:($('history').hidden?40:350)};
+ const padding={top:180,bottom:mobile?(detail?detail+146:150):155,left:mobile?24:document.querySelector('.conversation-panel').getBoundingClientRect().right+28,right:mobile?24:($('history').hidden?40:$('history').getBoundingClientRect().width+52)};
  // Keep a usable camera area even on a short viewport.
  padding.top=Math.min(padding.top,Math.max(0,shell.height-120));
  padding.bottom=Math.min(padding.bottom,Math.max(0,shell.height-padding.top-80));
@@ -71,6 +71,7 @@ function resizeMapView(){
  if(pending)pending();
  else if(mapFrame==='china')showChina(false,0);
  else if(mapFrame==='stops')overview(0);
+ else if(mapFrame==='explore')showHomeMap(0);
 }
 function restoreMapCamera(camera){
  mapFrame=camera.frame||'free';const version=++cameraIntentVersion;
@@ -84,7 +85,7 @@ function restoreMapCamera(camera){
  };
  restore();
 }
-function currentMapAngles(){return ready?{pitch:map.getPitch(),bearing:map.getBearing()}:{pitch:42,bearing:0};}
+function currentMapAngles(){return ready?{pitch:map.getPitch(),bearing:map.getBearing()}:{pitch:0,bearing:0};}
 function updateMapViewControls(){
  if(!ready)return;
  const pitch=map.getPitch(),bearing=map.getBearing();
@@ -105,7 +106,7 @@ function rotateMap(direction){
 }
 function selectStop(id,fly=true,openView=true){
  const stop=stops.find(s=>s.id===id);if(!stop)throw new Error('未知地点');
- active=id;mapFrame='place';$('history').hidden=false;$('era').textContent=stop.era||'本次查询线索';$('location-title').textContent=stop.name;$('location-subtitle').textContent=stop.subtitle||'位置为区域示意';$('history-copy').textContent=stop.text||'';$('location-evidence').textContent=stop.evidence||'待核查';
+ active=id;mapFrame='place';collapseHistory();updatePlacePrecision(stop);$('history').hidden=false;$('era').textContent=stop.era||'本次查询线索';$('location-title').textContent=stop.name;$('location-subtitle').textContent=stop.subtitle||'位置为区域示意';$('history-copy').textContent=stop.text||'';$('location-evidence').textContent=stop.evidence||'待核查';
  $('source-copy').replaceChildren();
  if(stop.sources?.length){for(const source of stop.sources)linkSource($('source-copy'),source);}else{const p=document.createElement('p');p.textContent=stop.source||'尚缺可核对的来源。';$('source-copy').append(p);}
  document.querySelectorAll('.stop').forEach(el=>{const selected=el.dataset.id===id;el.classList.toggle('active',selected);el.setAttribute('aria-current',selected?'location':'false');});markers.forEach(m=>m.el.classList.toggle('active',m.id===id));
@@ -113,7 +114,7 @@ function selectStop(id,fly=true,openView=true){
   if(openView)showView('map');
   const version=++cameraIntentVersion;
   queueMapFrame(()=>{
-   const locate=()=>{if(!ready||version!==cameraIntentVersion)return;if(!mapVisible()){pendingMapCamera=locate;return;}pendingMapCamera=null;map.stop();map.resize();map.flyTo({center:stop.coordinates,zoom:stop.precision==='province'?6:8,...currentMapAngles(),duration:reduced?0:1300,padding:mapPadding()});};
+   const locate=()=>{if(!ready||version!==cameraIntentVersion)return;if(!mapVisible()){pendingMapCamera=locate;return;}pendingMapCamera=null;map.stop();map.resize();map.flyTo({center:stop.coordinates,zoom:stop.precision==='province'?6:9,...currentMapAngles(),duration:reduced?0:1300,padding:mapPadding()});};
    locate();
   });
  }
@@ -139,13 +140,13 @@ function renderStops(){
 function syncMap(){
  if(!ready)return;
  for(const marker of markers)marker.marker.remove();markers.length=0;
- for(const stop of stops){const el=document.createElement('button');el.type='button';el.className='pin';el.textContent=stop.name;el.setAttribute('aria-label','查看 '+stop.name);el.addEventListener('click',()=>selectStop(stop.id));const marker=new maplibregl.Marker({element:el,anchor:'bottom'}).setLngLat(stop.coordinates).addTo(map);markers.push({id:stop.id,el,marker});}
+ for(const stop of stops){const el=document.createElement('button');el.type='button';el.className='pin';el.dataset.number=String(stops.indexOf(stop)+1);el.textContent=stop.name;el.setAttribute('aria-label','查看 '+stop.name);el.addEventListener('click',()=>selectStop(stop.id));const marker=new maplibregl.Marker({element:el,anchor:'bottom'}).setLngLat(stop.coordinates).addTo(map);markers.push({id:stop.id,el,marker});}
  const features=currentRoutes.map(route=>{const from=stops.find(s=>s.id===route.fromId),to=stops.find(s=>s.id===route.toId);return from&&to?{type:'Feature',properties:{},geometry:{type:'LineString',coordinates:[from.coordinates,to.coordinates]}}:null;}).filter(Boolean);
  map.getSource('route').setData({type:'FeatureCollection',features});map.setLayoutProperty('route-line','visibility',window.routeRevealed?'visible':'none');
 }
-function setMapDataset(nodes,routes=[]){stops=nodes.filter(s=>isChinaCoordinate(s.coordinates));currentRoutes=routes;active=null;pendingMapCamera=null;mapFrame='china';cameraIntentVersion++;$('history').hidden=true;$('map-toast').hidden=true;renderStops();syncMap();}
-function useDemoMap(){window.routeRevealed=false;setMapDataset(demoStops.slice(),[{fromId:'leping',toId:'yangxin'},{fromId:'yangxin',toId:'tongshan'}]);$('map-heading').textContent='从家乡出发';$('route-caption').textContent='阮氏背景示例 · 不代表你的祖先';$('timeline-title').textContent='先探索这些背景地点';showChina();}
-function useLiveMap(){window.routeRevealed=false;setMapDataset([]);$('map-heading').textContent='从中国，寻找来路';$('route-caption').textContent='仅展示本次查询有来源的中国地点';$('timeline-title').textContent='本次查询地点';showChina();}
+function setMapDataset(nodes,routes=[]){stops=nodes.filter(s=>isChinaCoordinate(s.coordinates));currentRoutes=routes;active=null;pendingMapCamera=null;mapFrame='explore';cameraIntentVersion++;$('history').hidden=true;$('map-toast').hidden=true;renderStops();syncMap();}
+function useDemoMap(){window.routeRevealed=false;setMapDataset(demoStops.slice(),[{fromId:'leping',toId:'yangxin'},{fromId:'yangxin',toId:'tongshan'}]);$('map-heading').textContent='从家乡出发';$('route-caption').textContent='阮氏背景示例 · 不代表你的祖先';$('timeline-title').textContent='先探索这些背景地点';showHomeMap();}
+function useLiveMap(){window.routeRevealed=false;setMapDataset([]);$('map-heading').textContent='从中国，寻找来路';$('route-caption').textContent='仅展示本次查询有来源的中国地点';$('timeline-title').textContent='本次查询地点';showHomeMap();}
 function revealRoute(){window.routeRevealed=true;$('route-caption').textContent='候选迁徙示意 · 待核查，非实际行走路线';$('map-heading').textContent='沿着线索，看见来路';syncMap();showView('map');queueMapFrame(overview);}
 function updateResearchMap(result){
  const sources=new Map((result.sources||[]).map(s=>[s.id,s])),nodes=[],foreignIds=new Set((result.mapNodes||[]).filter(node=>Number.isFinite(node.lng)&&Number.isFinite(node.lat)&&!isChinaCoordinate([node.lng,node.lat])).map(node=>node.id));
@@ -168,7 +169,7 @@ function refreshProvinceLabels(){
  const placed=[],zoom=map.getZoom(),size=map.getContainer().getBoundingClientRect();
  for(const marker of provinceMarkers){
   const p=map.project(marker.coordinates),width=marker.el.textContent.length*13+12;
-  const hidden=zoom>8.5||(zoom<5.3&&marker.small)||p.x<0||p.x>size.width||p.y<0||p.y>size.height||placed.some(item=>Math.abs(item.x-p.x)<(item.width+width)/2+8&&Math.abs(item.y-p.y)<24);
+  const hidden=(basemapUsable&&!basemapFailed)||zoom>8.5||(zoom<5.3&&marker.small)||p.x<0||p.x>size.width||p.y<0||p.y>size.height||placed.some(item=>Math.abs(item.x-p.x)<(item.width+width)/2+8&&Math.abs(item.y-p.y)<24);
   marker.el.hidden=hidden;if(!hidden)placed.push({x:p.x,y:p.y,width});
  }
 }
@@ -180,6 +181,8 @@ $('view-flat').addEventListener('click',()=>setMapPerspective(0));
 $('view-tilted').addEventListener('click',()=>setMapPerspective(42));
 $('rotate-left').addEventListener('click',()=>rotateMap(-1));
 $('rotate-right').addEventListener('click',()=>rotateMap(1));
+$('history-more').addEventListener('click',()=>{const open=$('history').classList.toggle('expanded');$('history-more').setAttribute('aria-expanded',String(open));$('history-more').textContent=open?'收起详情':'展开详情';resizeMapView();});
+$('retry-basemap').addEventListener('click',retryDetailedBasemap);
 $('close-history').addEventListener('click',()=>{$('history').hidden=true;resizeMapView();});
 window.addEventListener('resize',()=>queueMapFrame(resizeMapView));
 $('ask-location').addEventListener('click',()=>{const stop=stops.find(s=>s.id===active);if(!stop)return;showView('chat');$('question').value='关于'+stop.name+'，还有哪些家族历史线索和可查证的来源？';$('question').focus();});
@@ -187,16 +190,20 @@ renderStops();
 try{
  if(!window.maplibregl)throw new Error('地图组件未加载');
  map=new maplibregl.Map({
-  container:'map',style:{version:8,sources:{provinces:{type:'geojson',data:chinaMapData,attribution:'中国省级示意边界：DataV GeoAtlas'}},layers:[
+  container:'map',style:{version:8,sources:{basemap:{type:'raster',tiles:detailedMapTiles,tileSize:256,minzoom:3,maxzoom:19,bounds:chinaExtent,attribution:'© <a href="https://www.openstreetmap.org/copyright" target="_blank" rel="noopener">OpenStreetMap</a> contributors'},'china-mask':{type:'geojson',data:createChinaMask()},provinces:{type:'geojson',data:chinaMapData,attribution:'中国省级示意边界：DataV GeoAtlas'}},layers:[
    {id:'background',type:'background',paint:{'background-color':'#edf0e7'}},
+   {id:'basemap-detail',type:'raster',source:'basemap',paint:{'raster-saturation':-0.5,'raster-contrast':-0.08,'raster-brightness-max':0.98,'raster-fade-duration':200}},
+   {id:'china-mask',type:'fill',source:'china-mask',paint:{'fill-color':'#e8efeb','fill-opacity':1}},
    {id:'province-fill',type:'fill',source:'provinces',paint:{'fill-color':['get','shade'],'fill-opacity':1}},
-   {id:'province-relief',type:'fill-extrusion',source:'provinces',paint:{'fill-extrusion-color':['get','shade'],'fill-extrusion-height':['interpolate',['linear'],['zoom'],2,9000,5,1200,8,0],'fill-extrusion-base':0,'fill-extrusion-opacity':0.92}},
+   {id:'province-relief',type:'fill-extrusion',source:'provinces',paint:{'fill-extrusion-color':['get','shade'],'fill-extrusion-height':['interpolate',['linear'],['zoom'],2,9000,5,1200,8,0],'fill-extrusion-base':0,'fill-extrusion-opacity':0}},
    {id:'province-border',type:'line',source:'provinces',paint:{'line-color':'#f8faee','line-width':['interpolate',['linear'],['zoom'],3,0.8,7,1.5],'line-opacity':0.95}}
-  ]},center:[105,34],zoom:3.5,pitch:42,bearing:0,minZoom:1.3,maxZoom:10,maxPitch:60,renderWorldCopies:true,attributionControl:true
+  ]},center:[109.2,32.1],zoom:4.5,pitch:0,bearing:0,minZoom:1.3,maxZoom:17,maxPitch:60,renderWorldCopies:true,attributionControl:true
  });
  map.addControl(new maplibregl.NavigationControl({visualizePitch:true}),'top-right');
+ map.addControl(new maplibregl.ScaleControl({maxWidth:100,unit:'metric'}),'bottom-left');
+ map.on('sourcedata',event=>{if(event.sourceId==='basemap'&&event.tile?.state==='loaded'){basemapUsable=true;basemapFailed=false;updateMapDetail();}});
  const timeout=setTimeout(()=>{if(!ready)$('map-status').textContent='地图暂未打开，仍可继续对话查看线索。';},15000);
- map.on('load',()=>{
+ map.once('style.load',()=>{
   ready=true;clearTimeout(timeout);$('map-status').hidden=true;
   document.querySelectorAll('#map-view-controls button').forEach(button=>button.disabled=false);
   const provinces=window.provinceData.features.filter(f=>f.properties.name&&f.properties.center).sort((a,b)=>{
@@ -211,15 +218,16 @@ try{
   map.addSource('route',{type:'geojson',data:{type:'FeatureCollection',features:[]}});
   map.addLayer({id:'route-line',type:'line',source:'route',layout:{visibility:'none'},paint:{'line-color':'#8c6d36','line-width':2.8,'line-dasharray':[2,3],'line-opacity':0.95}});
   syncMap();
-  if(active&&stops.some(stop=>stop.id===active)){const hidden=$('history').hidden,toastHidden=$('map-toast').hidden,toast=$('map-toast').textContent;selectStop(active,true,false);$('history').hidden=hidden;$('map-toast').hidden=toastHidden;$('map-toast').textContent=toast;}else showChina();
-  updateMapViewControls();refreshProvinceLabels();
+  if(active&&stops.some(stop=>stop.id===active)){const hidden=$('history').hidden,toastHidden=$('map-toast').hidden,toast=$('map-toast').textContent;selectStop(active,true,false);$('history').hidden=hidden;$('map-toast').hidden=toastHidden;$('map-toast').textContent=toast;}else showHomeMap();
+  updateMapViewControls();refreshProvinceLabels();updateMapDetail();
  });
  map.on('move',refreshProvinceLabels);
- map.on('moveend',updateMapViewControls);
+ map.on('moveend',()=>{updateMapViewControls();updateMapDetail();});
+ map.on('movestart',event=>{if(event.originalEvent){mapFrame='free';cameraIntentVersion++;pendingMapCamera=null;}});
  map.on('dragend',()=>{
   const center=map.getCenter(),lng=Math.max(chinaExtent[0]-5,Math.min(chinaExtent[2]+5,center.lng)),lat=Math.max(chinaExtent[1]-5,Math.min(chinaExtent[3]+5,center.lat));
   if(Math.abs(lng-center.lng)>1e-6||Math.abs(lat-center.lat)>1e-6)map.jumpTo({center:[lng,lat]});
   updateMapViewControls();
  });
- map.on('error',e=>console.warn('Map source unavailable',e.error?.message));
+ map.on('error',e=>{if(e.sourceId==='basemap'||e.error?.message?.includes('tile.openstreetmap.org')){basemapFailed=true;updateMapDetail();}else console.warn('Map source unavailable',e.error?.message);});
 }catch(e){$('map-status').textContent='地图暂未打开，仍可继续对话查看线索。';}

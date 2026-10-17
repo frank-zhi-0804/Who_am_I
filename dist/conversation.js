@@ -31,7 +31,7 @@ function saveConversation(){
     messages:Array.from($('conversation').childNodes),suggestions:Array.from($('suggestions').childNodes),compact:$('suggestions').classList.contains('compact'),
     welcomeHidden:$('welcome').hidden,draft:$('question').value,draftHeight:$('question').style.height,
     errorHidden:$('form-error').hidden,errorText:$('form-error').textContent,scrollTop:$('thread-scroll').scrollTop,view:$('workspace').dataset.view,
-    stops:stops.slice(),routes:currentRoutes.slice(),routeRevealed:window.routeRevealed,active,historyHidden:$('history').hidden,historyExpanded:$('history').querySelector('details').open,
+    stops:stops.slice(),routes:currentRoutes.slice(),routeRevealed:window.routeRevealed,active,historyHidden:$('history').hidden,historyExpanded:$('history').querySelector('details').open,historyCardExpanded:$('history').classList.contains('expanded'),
     heading:$('map-heading').textContent,caption:$('route-caption').textContent,timelineTitle:$('timeline-title').textContent,toast:$('map-toast').textContent,toastHidden:$('map-toast').hidden,
     camera:ready?{center:map.getCenter().toArray(),zoom:map.getZoom(),pitch:map.getPitch(),bearing:map.getBearing(),frame:mapFrame}:null
   };
@@ -42,7 +42,7 @@ function restoreConversation(state){
   $('question').value=state.draft;$('question').style.height=state.draftHeight;$('form-error').hidden=state.errorHidden;$('form-error').textContent=state.errorText;
   window.routeRevealed=state.routeRevealed;setMapDataset(state.stops.slice(),state.routes.slice());
   if(state.active&&stops.some(stop=>stop.id===state.active))selectStop(state.active,false,false);
-  $('history').hidden=state.historyHidden;$('history').querySelector('details').open=state.historyExpanded;
+  $('history').hidden=state.historyHidden;$('history').querySelector('details').open=state.historyExpanded;$('history').classList.toggle('expanded',!!state.historyCardExpanded);$('history-more').setAttribute('aria-expanded',String(!!state.historyCardExpanded));$('history-more').textContent=state.historyCardExpanded?'收起详情':'展开详情';
   $('map-heading').textContent=state.heading;$('route-caption').textContent=state.caption;$('timeline-title').textContent=state.timelineTitle;$('map-toast').textContent=state.toast;$('map-toast').hidden=state.toastHidden;
   showView(state.view);updateServiceNotice();setBusy(false);
   for(const button of $('conversation').querySelectorAll('button'))retryRefreshers.get(button)?.();

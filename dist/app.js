@@ -152,17 +152,27 @@ function updateResearchMap(result){
  const sources=new Map((result.sources||[]).map(s=>[s.id,s])),nodes=[],foreignIds=new Set((result.mapNodes||[]).filter(node=>Number.isFinite(node.lng)&&Number.isFinite(node.lat)&&!isChinaCoordinate([node.lng,node.lat])).map(node=>node.id));
  for(const node of result.mapNodes||[]){
   if(!node.sourceIds?.some(id=>sources.has(id))||!isChinaCoordinate([node.lng,node.lat]))continue;
-  nodes.push({id:node.id,name:node.name,coordinates:[node.lng,node.lat],precision:node.precision,era:node.year?String(node.year):'公开资料线索',subtitle:node.precision==='exact'?'文献提供的位置':'区域示意 · 非祖居精确位置',text:node.summary,evidence:'有来源线索',sources:node.sourceIds.map(id=>sources.get(id)).filter(Boolean)});
+  nodes.push({id:node.id,name:node.name,coordinates:[node.lng,node.lat],precision:node.precision,kind:node.kind,era:node.year?String(node.year):'公开资料线索',subtitle:node.precision==='exact'?'文献提供的位置':'区域示意 · 非祖居精确位置',text:node.summary,evidence:'有来源线索',sources:node.sourceIds.map(id=>sources.get(id)).filter(Boolean)});
  }
  for(const clue of result.clues||[]){
   const location=clue.location;if(!location?.name||foreignIds.has(clue.id)||(Number.isFinite(location.lng)&&Number.isFinite(location.lat)&&!isChinaCoordinate([location.lng,location.lat]))||!clue.sourceIds?.some(id=>sources.has(id))||nodes.some(n=>n.id===clue.id))continue;
   const province=window.provinceData.features.find(f=>f.properties.name&&(location.name.includes(f.properties.name)||location.name.includes(f.properties.name.replace(/省|市|壮族自治区|回族自治区|维吾尔自治区|自治区/g,''))));
   if(!province||nodes.some(n=>n.name===province.properties.name))continue;
-  nodes.push({id:clue.id,name:province.properties.name,coordinates:province.properties.centroid||province.properties.center,precision:'province',era:'相关资料 · 省域示意',subtitle:'资料涉及 '+location.name+'，地图仅标省域',text:clue.summary,evidence:'区域示意',sources:clue.sourceIds.map(id=>sources.get(id)).filter(Boolean)});
+  nodes.push({id:clue.id,name:province.properties.name,coordinates:province.properties.centroid||province.properties.center,precision:'province',kind:clue.kind,era:'相关资料 · 省域示意',subtitle:'资料涉及 '+location.name+'，地图仅标省域',text:clue.summary,evidence:'区域示意',sources:clue.sourceIds.map(id=>sources.get(id)).filter(Boolean)});
  }
  const routes=(result.routes||[]).filter(r=>r.sourceIds?.some(id=>sources.has(id))&&nodes.some(n=>n.id===r.fromId&&n.precision!=='province')&&nodes.some(n=>n.id===r.toId&&n.precision!=='province'));
  window.routeRevealed=routes.length>0;setMapDataset(nodes,routes);
- $('map-heading').textContent=stops.length?'本次探索的来路':'线索位置尚待确认';$('route-caption').textContent=routes.length?'有来源支持的候选迁徙联系':'中国地点线索 · 不自动组成迁徙路线';$('timeline-title').textContent='本次查询地点';overview();return stops.length;
+ $('map-heading').textContent=stops.length?'本次探索的来路':'线索位置尚待确认';$('route-caption').textContent=routes.length?'有来源支持的候选迁徙联系':'中国地点线索 · 不自动组成迁徙路线';$('timeline-title').textContent='本次查询地点';
+ const candidateNodes=nodes.filter(node=>node.kind==='candidate');
+ const focus=candidateNodes.length===1?candidateNodes[0]:nodes.length===1?nodes[0]:null;
+ if(focus){
+  $('map-heading').textContent='已定位查询地区';
+  $('route-caption').textContent=focus.precision==='province'?'姓氏与地区线索 · 省域示意':'姓氏与地区线索 · '+focus.name;
+  selectStop(focus.id,true,true);
+  $('map-toast').textContent='已根据姓氏与地区定位到 '+focus.name+'，可继续查看来源';
+  $('map-toast').hidden=false;
+ }else overview();
+ return {count:stops.length,autoFocused:Boolean(focus)};
 }
 function refreshProvinceLabels(){
  if(!ready)return;

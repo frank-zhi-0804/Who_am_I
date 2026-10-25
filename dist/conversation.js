@@ -16,14 +16,25 @@ else if(action==='family'){message('assistant','可以问长辈一个具体问�
 else if(action==='change'){branch=null;window.routeRevealed=false;syncMap();$('route-caption').textContent='重新核对字辈 · 候选路线暂不展开';followup();return;}
 suggestions([['看看江西迁徙线索','route'],['竹林堂和阮籍有什么关系？','culture'],['我还需要问家里什么？','family'],['重新选择字辈','change']]);}
 
-function welcomeSuggestions(){if(conversationMode==='demo'){suggestions([['阮氏示例：家里的字辈说明什么？','generation-demo'],['阮氏示例：祖上从江西来？','origin-demo'],['阮氏示例：同姓就是一家人吗？','culture-demo']]);}else{suggestions([['我想了解家族来历，需要先提供哪些线索？',''],['家里的字辈能帮助找祖籍吗？',''],['长辈说祖上迁来，怎样核查？','']]);}}
-function updateServiceNotice(){ $('mode-live').setAttribute('aria-pressed',String(conversationMode==='live'));$('mode-demo').setAttribute('aria-pressed',String(conversationMode==='demo'));$('session-tag').textContent=conversationMode==='demo'?'阮氏示例':'真实溯源';$('service-notice').classList.toggle('warning',conversationMode==='live'&&(!agentStatus.available||Boolean(serviceIssue)));$('service-notice').textContent=conversationMode==='demo'?'预置阮氏材料演示，尚未核对原谱。':serviceIssue|| (agentStatus.available?'可提交线索查找公开资料，结果将保留出处。':'真实溯源暂时无法使用，可以先切换到「体验示例」。');$('question').placeholder=conversationMode==='demo'?'选择上面的示例，或回答助手的追问…':'例如：我姓陈，祖籍福建泉州，想知道家族迁徙线索。';}
+function welcomeSuggestions(){if(conversationMode==='demo'){suggestions([['阮氏示例：家里的字辈说明什么？','generation-demo'],['阮氏示例：祖上从江西来？','origin-demo'],['阮氏示例：同姓就是一家人吗？','culture-demo']]);}else{suggestions([['我姓陈，现在住佛山，不知道祖籍',''],['我姓李，现在住杭州，想查公开资料',''],['长辈说祖上迁来，怎样核查？','']]);}}
+function updateServiceNotice(){ $('mode-live').setAttribute('aria-pressed',String(conversationMode==='live'));$('mode-demo').setAttribute('aria-pressed',String(conversationMode==='demo'));$('session-tag').textContent=conversationMode==='demo'?'阮氏示例':'真实溯源';$('service-notice').classList.toggle('warning',conversationMode==='live'&&(!agentStatus.available||Boolean(serviceIssue)));$('service-notice').textContent=conversationMode==='demo'?'预置阮氏材料演示，尚未核对原谱。':serviceIssue|| (agentStatus.available?'可提交线索查找公开资料，结果将保留出处。':'真实溯源暂时无法使用，可以先切换到「体验示例」。');$('question').placeholder=conversationMode==='demo'?'选择上面的示例，或回答助手的追问…':'例如：我姓陈，现在住广东佛山，不知道祖籍。';}
 function researchError(result,response){const error=new Error(result?.error?.message||result?.message||'本次查找未完成，请稍后重试。');error.code=typeof result?.error?.code==='string'?result.error.code:'HTTP_ERROR';error.httpStatus=response.status;const retryAfter=response.headers.get('Retry-After');if(retryAfter){const seconds=/^\d+$/.test(retryAfter.trim())?Number(retryAfter):Math.max(0,(Date.parse(retryAfter)-Date.now())/1000);if(Number.isFinite(seconds))error.retryAfterMs=Math.min(seconds*1000,86400000);}return error;}
 function waitDescription(waitMs){const seconds=Math.max(1,Math.ceil(waitMs/1000));return seconds>=60?Math.ceil(seconds/60)+'分钟':seconds+'秒';}
 function describeResearchError(error){const code=error.code||'NETWORK_ERROR',status=error.httpStatus;const permanent=['AGENT_NOT_CONFIGURED','PROVIDER_CONFIG_ERROR','PROVIDER_AUTH_ERROR','PROVIDER_REDIRECT','PROVIDER_CAPABILITY_ERROR','PROVIDER_MODEL_ERROR','PROVIDER_REQUEST_ERROR','PROVIDER_UNSUPPORTED'];if(permanent.includes(code)||status===401||status===403){return {message:'溯源服务暂时无法使用，请稍后再来。你也可以先切换「体验示例」。',notice:'溯源服务暂时无法使用，可以先体验示例。',retryable:false,waitMs:0};}if(status===429||['RATE_LIMIT','HOURLY_LIMIT','PROVIDER_RATE_LIMIT','AGENT_BUSY'].includes(code)){const waitMs=Math.max(1000,error.retryAfterMs??(code==='HOURLY_LIMIT'?3600000:60000));const wait=waitDescription(waitMs);return {message:'当前查找较多或服务额度受限，请等待'+wait+'后再试。你可以先编辑线索或体验示例。',notice:'请等待'+wait+'后再查找，可以继续编辑线索。',retryable:true,waitMs};}if(status>=400&&status<500&&status!==408){return {message:error.message||'输入的信息暂时无法处理，请调整问题后再试。',notice:'请调整问题后再试，也可以开始新对话。',retryable:false,waitMs:0};}return {message:status?error.message:'暂时无法连接溯源服务，请稍后再试。',notice:'这次查找未完成，可以稍后重试。',retryable:true,waitMs:0};}
 function appendResearchRetry(text,waitMs=0){const retry=document.createElement('button'),mode=conversationMode;let timer;retry.className='text-button';retry.type='button';function refresh(){clearTimeout(timer);if(!retry.isConnected||conversationMode!==mode)return;const remaining=Math.max(0,researchRetryAt-Date.now());retry.disabled=remaining>0;retry.textContent=remaining>0?'等待'+waitDescription(remaining)+'后可重试':'重试这次查找';if(remaining>0)timer=setTimeout(refresh,Math.min(remaining,60000));else if(waitMs&&serviceIssue?.includes('请等待')){serviceIssue=null;updateServiceNotice();}}retryRefreshers.set(retry,refresh);retry.addEventListener('click',()=>{if(conversationMode===mode&&!busy&&Date.now()>=researchRetryAt){retry.remove();sendResearch(text,false);}});$('conversation').append(retry);refresh();}
 function setBusy(value){busy=value;$('query-progress').hidden=!value;$('send-question').disabled=value;$('send-question').textContent=value?'查找中…':conversationStage==='welcome'?'开始探索':'发送';document.querySelectorAll('#suggestions button').forEach(b=>b.disabled=value);}
 function cancelResearch(notify=true){if(!busy)return;const text=pendingResearchText;requestVersion++;requestController?.abort();requestController=null;pendingResearchText=null;setBusy(false);if(notify){message('assistant','已停止这次查找。你可以调整问题后继续。');if(text)appendResearchRetry(text);}}
+function extractProfile(text){
+ const context=[...researchHistory.filter(item=>item.role==='user').map(item=>item.content),text].join('\n');
+ const profile={},surname=context.match(/(?:我(?:们家)?|我们家)?姓[：:\s]*([\u3400-\u4dbf\u4e00-\u9fff]{1,2})(?:氏)?(?=[\s，,。；;]|现在|目前|现居|现住|住在|居住在|祖籍|家乡|老家|$)/u);
+ const current=context.match(/(?:我(?:目前|现在)?(?:居住|住|生活|人在)(?:在|于)?|现居(?:住在)?|现住(?:在)?|目前居住在|现在居住在|目前住在|现在住在|目前住|现在住|目前在|现在在|居住在|住在|生活在|家住)\s*([^，,。；;\n！？!?]{2,40})/u);
+ const ancestral=context.match(/(?:祖籍|祖居|家乡|老家)(?:是|在|于)?\s*([^，,。；;\n！？!?]{2,40})/u);
+ if(surname)profile.surname=surname[1].replace(/氏$/u,'');
+ const normalize=value=>value?.replace(/\s+(?:想|希望|想要|请|能否).*/u,'').trim();
+ if(current)profile.currentPlace=normalize(current[1]);
+ if(ancestral)profile.ancestralPlace=normalize(ancestral[1]);
+ return profile;
+}
 function saveConversation(){
   if(ready)map.stop();
   conversationSessions[conversationMode]={
@@ -58,18 +69,18 @@ async function sendResearch(text,appendUser=true){
   if(!agentStatus.available){message('assistant','真实溯源暂时无法使用，这次没有进行网络查询。可以先切换到「体验示例」，稍后再来查找。');suggestions([]);return {status:'unavailable'};}
   const version=++requestVersion;requestController=new AbortController();pendingResearchText=text;setBusy(true);$('progress-text').textContent='正在查找公开资料并整理出处…';$('suggestions').replaceChildren();scrollThread();
   try{
-    const response=await fetch('/api/agent/query',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({question:text,history:researchHistory.slice(-12)}),signal:requestController.signal});
+    const response=await fetch('/api/agent/query',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({question:text,history:researchHistory.slice(-12),profile:extractProfile(text)}),signal:requestController.signal});
     let result;try{result=await response.json();}catch{if(!response.ok)throw researchError(null,response);const invalid=new Error('服务暂未返回有效结果，请稍后重试。');invalid.code='INVALID_RESPONSE';invalid.httpStatus=response.status;throw invalid;}
     if(!response.ok)throw researchError(result,response);
     if(version!==requestVersion)return {status:'discarded'};
     if(typeof result?.answer!=='string'){const incomplete=new Error('这次结果不完整，请重试。');incomplete.code='INVALID_RESPONSE';incomplete.httpStatus=response.status;throw incomplete;}
     serviceIssue=null;researchRetryAt=0;updateServiceNotice();
-    message('assistant',result.answer,result.sources||[]);researchHistory.push({role:'user',content:text},{role:'assistant',content:result.answer});conversationStage='research';const count=updateResearchMap(result);const sourceMap=new Map((result.sources||[]).map(s=>[s.id,s]));
+    message('assistant',result.answer,result.sources||[]);researchHistory.push({role:'user',content:text},{role:'assistant',content:result.answer});conversationStage='research';const mapUpdate=updateResearchMap(result),count=mapUpdate.count;const sourceMap=new Map((result.sources||[]).map(s=>[s.id,s]));
     for(const item of result.clues||[]){const sources=(item.sourceIds||[]).map(id=>sourceMap.get(id)).filter(Boolean);clue(item.title,item.summary,item.id,sources);}
     if(result.sources?.length){const section=document.createElement('section');section.className='sources-list';const heading=document.createElement('h3');heading.textContent='本次查阅的来源';section.append(heading);for(const source of result.sources)linkSource(section,source);$('conversation').append(section);}
     if(result.gaps?.length){const p=document.createElement('p');p.className='gap-note';p.textContent='仍待确认：'+result.gaps.join('；');$('conversation').append(p);}
     if(result.followup?.question)message('assistant',result.followup.question);suggestions((result.followup?.options||[]).slice(0,4).map(label=>[label,'']));
-    if(count){$('map-toast').textContent='新增 '+count+' 处有来源的地点，点击「历史地图」查看。';$('map-toast').hidden=false;}scrollThread();return {status:'complete',places:count};
+    if(count&&!mapUpdate.autoFocused){$('map-toast').textContent='新增 '+count+' 处有来源的地点，点击「历史地图」查看。';$('map-toast').hidden=false;}scrollThread();return {status:'complete',places:count};
   }catch(error){
     if(version!==requestVersion)return {status:'discarded'};if(error.name==='AbortError')return {status:'cancelled'};
     const problem=describeResearchError(error);serviceIssue=problem.notice;updateServiceNotice();message('assistant',problem.message);

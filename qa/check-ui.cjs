@@ -61,18 +61,18 @@ const delay = ms => new Promise(resolve => setTimeout(resolve, ms));
       fs.writeFileSync(path.join(__dirname, name), Buffer.from(result.data, 'base64'));
     }
     async function waitMap() {
-      for (let i=0; i<50; i++) { if(await evaluate('ready')) return; await delay(200); }
+      for (let i=0; i<50; i++) { if(await evaluate(`typeof ready!=='undefined'&&ready`)) return; await delay(200); }
       throw new Error('Map failed to load');
     }
     const pinVisible = `(() => { const el=document.querySelector('.pin.active'); if(!el)return false;const r=el.getBoundingClientRect(),m=document.querySelector('.map-shell').getBoundingClientRect(),x=r.x+r.width/2,y=r.y+r.height/2,hit=document.elementFromPoint(x,y);return r.left>=m.left&&r.right<=m.right&&r.top>=m.top&&r.bottom<=m.bottom&&!!hit&&(hit===el||el.contains(hit)); })()`;
     await call('Runtime.enable'); await call('Page.enable');
     // API calls are locally mocked throughout; no actual research or paid API can run.
     await call('Page.addScriptToEvaluateOnNewDocument', { source: `
-      window.__queryCalls=0;
+      window.__queryCalls=0;window.__queryInputs=[];
       window.__originalFetch=window.fetch.bind(window);
       window.fetch=(url,options)=>{
         if(String(url).startsWith('/api/agent/status'))return Promise.resolve(new Response(JSON.stringify({available:false}),{status:200,headers:{'Content-Type':'application/json'}}));
-        if(String(url).startsWith('/api/agent/query')){window.__queryCalls++;return new Promise(resolve=>{window.__resolveResearch=value=>resolve(new Response(JSON.stringify(value.body),{status:value.status||200,headers:{'Content-Type':'application/json'}}));});}
+        if(String(url).startsWith('/api/agent/query')){window.__queryCalls++;window.__queryInputs.push(JSON.parse(options.body));return new Promise(resolve=>{window.__resolveResearch=value=>resolve(new Response(JSON.stringify(value.body),{status:value.status||200,headers:{'Content-Type':'application/json'}}));});}
         return window.__originalFetch(url,options);
       };` });
     await call('Emulation.setDeviceMetricsOverride', { width: 1440, height: 1000, deviceScaleFactor: 1, mobile: false });
@@ -137,20 +137,26 @@ const delay = ms => new Promise(resolve => setTimeout(resolve, ms));
     await click('#reset-chat');
     await evaluate(`window.__resolveResearch({body:{answer:'LATE_STALE_RESULT',sources:[],clues:[],mapNodes:[],routes:[]}});`); await delay(200);
     await check('Reset discards late response and restores controls', `!busy&&document.getElementById('conversation').children.length===0&&stops.length===0&&!document.getElementById('send-question').disabled`);
-    await type('我姓张，祖籍浙江'); await click('#send-question');
+    await type('我姓张，现在住浙江杭州'); await click('#send-question');
     await evaluate(`window.__resolveResearch({status:503,body:{error:{message:'测试服务连接失败'}}});`); await delay(200);
     await check('Mock service failure offers reachable retry', `!busy&&document.getElementById('conversation').textContent.includes('测试服务连接失败')&&!!document.querySelector('#conversation>button')&&stops.length===0`);
     await click('#conversation>button');
     await check('Retry begins only one new request', `busy&&window.__queryCalls===3`);
     await evaluate(`window.__resolveResearch({body:{answer:'测试资料线索，仅本地模拟。[S1]',sources:[{id:'S1',title:'有效来源',url:'https://example.com/genealogy',cited:true},{id:'unsafe',title:'恶意链接',url:'javascript:alert(1)',cited:true}],clues:[{id:'quanzhou',title:'泉州线索',summary:'本地模拟资料',sourceIds:['S1']}],mapNodes:[{id:'quanzhou',name:'泉州',lng:118.67,lat:24.87,precision:'city',summary:'本地模拟资料',sourceIds:['S1']},{id:'unsourced',name:'无来源点',lng:110,lat:30,sourceIds:[]}],routes:[{fromId:'quanzhou',toId:'unsourced',sourceIds:['S1']}],gaps:['仍缺谱页'],followup:{question:'知道村名吗？',options:['不知道']}}});`); await delay(200);
+    await check('Low-information query sends surname and current place context', `window.__queryInputs[2].profile.surname==='张'&&window.__queryInputs[2].profile.currentPlace==='浙江杭州'&&!window.__queryInputs[2].profile.ancestralPlace`);
     await check('Mock result has cited node and filters unsourced node/route', `!busy&&stops.length===1&&stops[0].id==='quanzhou'&&currentRoutes.length===0&&!window.routeRevealed`);
     await check('Unsafe source href is never rendered', `!Array.from(document.querySelectorAll('a')).some(a=>a.href.startsWith('javascript:'))`);
     await check('Research answer citation is clickable near claim', `!!Array.from(document.querySelectorAll('.message.assistant a')).find(a=>a.href==='https://example.com/genealogy'&&a.textContent.includes('S1'))`);
-    await check('Live result keeps chat and announces map changes', `document.getElementById('workspace').dataset.view==='chat'&&!document.getElementById('map-toast').hidden&&document.getElementById('map-toast').textContent.includes('1')`);
+    await check('Single live result switches to map and focuses its sourced region', `document.getElementById('workspace').dataset.view==='map'&&active==='quanzhou'&&document.getElementById('location-title').textContent==='泉州'&&!document.getElementById('map-toast').hidden&&(/已根据姓氏与地区|已定位/.test(document.getElementById('map-toast').textContent))`);
+    await delay(1600);
+    await check('Live result flight finishes at the queried region', `Math.abs(map.getCenter().lng-118.67)<0.05&&Math.abs(map.getCenter().lat-24.87)<0.05&&map.getZoom()>=8.5`);
+    await check('Automatically focused live pin is visible and uncovered', pinVisible);
     await shot('07-after-mobile-mock-research.png');
     // A later response may replace the map dataset; old clue buttons must stay safe.
+    await click('#tab-chat');
     await type('再查查浙江的另一条线索'); await click('#send-question');
-    await evaluate(`window.__resolveResearch({body:{answer:'另一条资料线索。[S1]',sources:[{id:'S1',title:'第二次来源',url:'https://example.com/second',cited:true}],clues:[{id:'hangzhou',title:'杭州线索',summary:'另一条本地模拟资料',sourceIds:['S1']}],mapNodes:[{id:'hangzhou',name:'杭州',lng:120.15,lat:30.27,precision:'city',summary:'另一条本地模拟资料',sourceIds:['S1']}],routes:[],gaps:[],followup:null}});`); await delay(200);
+    await evaluate(`window.__resolveResearch({body:{answer:'另一条资料线索。[S1]',sources:[{id:'S1',title:'第二次来源',url:'https://example.com/second',cited:true}],clues:[{id:'hangzhou',title:'杭州线索',summary:'另一条本地模拟资料',sourceIds:['S1']},{id:'wenzhou',title:'温州线索',summary:'另一条本地模拟资料',sourceIds:['S1']}],mapNodes:[{id:'hangzhou',name:'杭州',lng:120.15,lat:30.27,precision:'city',summary:'另一条本地模拟资料',sourceIds:['S1']},{id:'wenzhou',name:'温州',lng:120.70,lat:28.00,precision:'city',summary:'另一条本地模拟资料',sourceIds:['S1']}],routes:[],gaps:[],followup:null}});`); await delay(200);
+    await check('Multiple live result regions do not arbitrarily focus one location', `document.getElementById('workspace').dataset.view==='chat'&&active===null&&document.getElementById('history').hidden`);
     const beforeOldCard = exceptions.length;
     await click('#conversation .clue-card button.text-button'); await delay(1800);
     await check('Old clue map button stays usable after next response', `document.getElementById('workspace').dataset.view==='map'&&document.getElementById('location-title').textContent==='泉州'&&!document.getElementById('history').hidden`);

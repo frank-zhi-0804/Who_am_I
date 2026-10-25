@@ -137,6 +137,11 @@
       "detail": true
     },
     {
+      "name": "Low-information query sends surname and current place context",
+      "pass": true,
+      "detail": true
+    },
+    {
       "name": "Mock result has cited node and filters unsourced node/route",
       "pass": true,
       "detail": true
@@ -152,7 +157,22 @@
       "detail": true
     },
     {
-      "name": "Live result keeps chat and announces map changes",
+      "name": "Single live result switches to map and focuses its sourced region",
+      "pass": true,
+      "detail": true
+    },
+    {
+      "name": "Live result flight finishes at the queried region",
+      "pass": true,
+      "detail": true
+    },
+    {
+      "name": "Automatically focused live pin is visible and uncovered",
+      "pass": true,
+      "detail": true
+    },
+    {
+      "name": "Multiple live result regions do not arbitrarily focus one location",
       "pass": true,
       "detail": true
     },

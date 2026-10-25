@@ -28,7 +28,8 @@ test('provider compatibility omits only the unsupported native tool limit', asyn
   assert.equal(reply.status, 200);
   assert.equal((await reply.json()).clues.length, 1);
   assert.equal(Object.hasOwn(calls[0], 'max_tool_calls'), false);
-  assert.deepEqual(calls[0].tools, [{ type: 'web_search', search_context_size: 'low' }]);
+  assert.deepEqual(calls[0].tools, [{ type: 'web_search', search_context_size: 'medium' }]);
+  assert.equal(calls[0].tool_choice, 'required');
   assert.deepEqual(calls[0].include, ['web_search_call.action.sources']);
   assert.equal(calls[0].max_output_tokens, 4500);
   assert.equal(readConfig({}).nativeToolLimit, true);
@@ -94,7 +95,7 @@ test('fresh greetings return a clarification with zero provider calls or researc
     assert.equal(reply.status, 200);
     const result = await reply.json();
     assert.match(result.answer, /溯源助手/);
-    assert.match(result.followup.question, /姓什么.*祖籍/);
+    assert.match(result.followup.question, /姓什么.*现在住/);
     for (const property of ['sources', 'clues', 'mapNodes', 'routes']) assert.deepEqual(result[property], []);
     assert.deepEqual(result.usage, { inputTokens: 0, outputTokens: 0, searchCalls: 0, toolCalls: 0, elapsedMs: 0 });
   }
@@ -128,7 +129,8 @@ test('mixed greetings, actual questions and contextual followups retain the rese
     { question: '你好，想查陈氏的迁徙' },
     { question: '不知道', history: [{ role: 'assistant', content: '还记得村名吗？' }] },
     { question: '你好', history: [{ role: 'user', content: '我姓阮，祖籍湖北通山' }] },
-    { question: '你好', profile: { name: '阮', ancestralPlace: '湖北通山' } }
+    { question: '你好', profile: { name: '阮', ancestralPlace: '湖北通山' } },
+    { question: '我姓陈，现在住佛山', profile: { surname: '陈', currentPlace: '佛山' } }
   ];
   const api = createAgentApi({ OPENAI_API_KEY: 'test-key-not-a-real-credential', WHOAMI_REQUESTS_PER_MINUTE: '10' }, { fetch: async () => {
     calls++;
@@ -212,6 +214,10 @@ test('two-stage research uses fixed endpoint and provider citations, then extrac
   assert.equal(calls[1].payload.model, 'gpt-5.5', 'extraction defaults to the configured research model');
   assert.equal(calls[0].payload.max_tool_calls, 4);
   assert.equal(calls[0].payload.tools[0].type, 'web_search');
+  assert.equal(calls[0].payload.tools[0].search_context_size, 'medium');
+  assert.equal(calls[0].payload.tool_choice, 'required');
+  assert.match(calls[0].payload.instructions, /姓氏 \+ 现在住的地方/);
+  assert.match(calls[0].payload.instructions, /现居地当作检索入口/);
   assert.equal(calls[1].payload.text.format.strict, true);
   assert.equal(calls[1].payload.tools, undefined);
   assert.match(result.answer, /\[S1\]/);
@@ -224,6 +230,21 @@ test('two-stage research uses fixed endpoint and provider citations, then extrac
   assert.equal(result.usage.inputTokens, 230);
   assert.equal(result.usage.outputTokens, 140);
   assert.equal(result.usage.searchCalls, 1);
+});
+
+test('current residence is sent as a search anchor and stays distinct from ancestral place', async () => {
+  const calls = [];
+  const api = createAgentApi({ OPENAI_API_KEY: 'test-key-not-a-real-credential' }, { fetch: async (_url, init) => {
+    calls.push(JSON.parse(init.body));
+    return responseJson(calls.length === 1 ? researchFixture() : extractionResponse());
+  } });
+  const response = await api(query({ question: '我姓陈，现在住佛山，不知道祖籍', profile: { surname: '陈', currentPlace: '佛山' } }));
+  assert.equal(response.status, 200);
+  assert.deepEqual(JSON.parse(calls[0].input).profile, { surname: '陈', currentPlace: '佛山' });
+  const extractionInput = JSON.parse(calls[1].input);
+  assert.deepEqual(extractionInput.profile, { surname: '陈', currentPlace: '佛山' });
+  assert.match(calls[1].instructions, /不能改写成祖籍\/祖居/);
+  assert.equal((await response.json()).clues.length, 1);
 });
 
 test('extraction model independently configured and only cited sources passed to it', async () => {
